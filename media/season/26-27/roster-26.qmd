@@ -1,0 +1,22 @@
+---
+title: "2026-2027 Roster"
+---
+
+Filter the roster by name, position, or class.
+
+```{python}
+#| echo: false
+import importlib.util
+from pathlib import Path
+
+# Load the roster-table component (its filename has a hyphen, so it can't be a
+# normal import — we load it directly by path instead).
+spec = importlib.util.spec_from_file_location(
+    "roster_table", Path("../../components/roster-table.py").resolve()
+)
+roster_table = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(roster_table)
+
+# Render the table from this season's roster file.
+roster_table.render("roster-26.csv")
+```

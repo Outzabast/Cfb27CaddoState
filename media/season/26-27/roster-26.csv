@@ -1,0 +1,11 @@
+# Caddo State 2026-2027 roster
+# Schema (like a SQL table): Position(<=8 chars), Name, Class(enum), Number(optional)
+# Class accepts full names (Redshirt Freshman) or abbreviations (RS-FR, JR, ...).
+Position,Name,Class,Number
+QB,Bryce Joiner,Redshirt Freshman,7
+RB,AJ Trimble,Redshirt Sophomore,22
+RB,JJ Carden,Junior,28
+WR,Kareem Eber,Junior,1
+WR,Deyonte Hocker III,Freshman,80
+LEDGE,James Anenih,Junior,9
+CB,Kione Bryant,Redshirt Sophomore,24

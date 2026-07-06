@@ -1,0 +1,8 @@
+# Quarto internal working directory
+*/.quarto/
+
+# Default rendered output directories (uncomment if you want to exclude them)
+*/_site/
+
+# Computational caches and temporary freezing mechanisms
+*/_freeze/

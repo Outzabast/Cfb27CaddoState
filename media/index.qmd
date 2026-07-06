@@ -1,0 +1,4 @@
+---
+title: "media"
+---
+This is the Caddo State media dump, all media articles will go in this Quarto project. 

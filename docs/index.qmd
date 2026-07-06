@@ -1,0 +1,7 @@
+---
+title: "docs"
+---
+
+This is the docs quarto project for the Caddo State playthrough. 
+
+I will keep general information and not media like post/pre game articles, etc. in here. 
