@@ -1,0 +1,221 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A player's academic class. Includes redshirt variants for each year, plus two
+/// lifecycle states: GRADUATED (aged out) and TRANSFERRED (left for another team).
+enum PlayerClass {
+  FRESHMAN
+  REDSHIRT_FRESHMAN
+  SOPHOMORE
+  REDSHIRT_SOPHOMORE
+  JUNIOR
+  REDSHIRT_JUNIOR
+  SENIOR
+  REDSHIRT_SENIOR
+  GRADUATED
+  TRANSFERRED
+
+  @@map("player_class")
+}
+
+/// Where a game was played, from Caddo State's perspective.
+enum GameLocation {
+  HOME
+  AWAY
+  NEUTRAL
+
+  @@map("game_location")
+}
+
+/// A player's stable identity. The `id` lets every other table (rosters and
+/// game stats) refer to the same player across seasons. Position and class live
+/// here because they describe the player's current state and change over time.
+model Player {
+  id        Int         @id @default(autoincrement())
+  name      String
+  position  String      @db.VarChar(8)
+  class     PlayerClass
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  rosterEntries RosterEntry[]
+  gameStats     GamePlayerStat[]
+
+  @@map("players")
+}
+
+/// A single season, e.g. "2026-2027" spanning startYear -> endYear.
+model Season {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  startYear Int      @map("start_year")
+  endYear   Int      @map("end_year")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  rosterEntries RosterEntry[]
+  games         Game[]
+
+  @@map("seasons")
+}
+
+/// The roster: which players are on the team for a given season. A player can
+/// appear on many seasons' rosters. `number` is the optional jersey number,
+/// kept here (per season) since numbers can change year to year.
+model RosterEntry {
+  id       Int  @id @default(autoincrement())
+  seasonId Int  @map("season_id")
+  playerId Int  @map("player_id")
+  number   Int?
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, playerId])
+  @@map("roster_entries")
+}
+
+/// One game in a season, with the final scoreboard. Player and team stat lines
+/// hang off this. Season/career totals are SQL views that aggregate these games
+/// (see the stat_views migration), so they never drift from the box scores.
+model Game {
+  id         Int          @id @default(autoincrement())
+  seasonId   Int          @map("season_id")
+  week       Int?
+  date       DateTime?    @db.Date
+  opponent   String
+  location   GameLocation @default(HOME)
+  teamPoints Int          @default(0) @map("team_points")
+  oppPoints  Int          @default(0) @map("opp_points")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  season      Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  playerStats GamePlayerStat[]
+  teamStats   GameTeamStat?
+
+  @@unique([seasonId, week])
+  @@map("games")
+}
+
+/// One player's box-score line for one game. Every counting stat defaults to 0,
+/// so a player who dressed but didn't record anything still gets a row. Columns
+/// are grouped Offensive / Defensive / Kicking / Other. "*Long" columns are a
+/// single-play best (aggregated with MAX, not SUM, in the season/career views).
+model GamePlayerStat {
+  id       Int @id @default(autoincrement())
+  gameId   Int @map("game_id")
+  playerId Int @map("player_id")
+
+  // --- Offensive: passing ---
+  passCmp  Int @default(0) @map("pass_cmp")
+  passAtt  Int @default(0) @map("pass_att")
+  passYds  Int @default(0) @map("pass_yds")
+  passTd   Int @default(0) @map("pass_td")
+  passInt  Int @default(0) @map("pass_int")
+  passLong Int @default(0) @map("pass_long")
+  sacked   Int @default(0)
+  // --- Offensive: rushing ---
+  rushAtt  Int @default(0) @map("rush_att")
+  rushYds  Int @default(0) @map("rush_yds")
+  rushTd   Int @default(0) @map("rush_td")
+  rushLong Int @default(0) @map("rush_long")
+  // --- Offensive: receiving ---
+  targets Int @default(0)
+  rec     Int @default(0)
+  recYds  Int @default(0) @map("rec_yds")
+  recTd   Int @default(0) @map("rec_td")
+  recLong Int @default(0) @map("rec_long")
+
+  // --- Defensive ---
+  tacklesSolo    Int   @default(0) @map("tackles_solo")
+  tacklesAst     Int   @default(0) @map("tackles_ast")
+  tacklesForLoss Float @default(0) @map("tackles_for_loss")
+  sacks          Float @default(0)
+  qbHurries      Int   @default(0) @map("qb_hurries")
+  defInt         Int   @default(0) @map("def_int")
+  intYds         Int   @default(0) @map("int_yds")
+  passesDefended Int   @default(0) @map("passes_defended")
+  forcedFumbles  Int   @default(0) @map("forced_fumbles")
+  fumblesRec     Int   @default(0) @map("fumbles_recovered")
+  defTd          Int   @default(0) @map("def_td")
+
+  // --- Kicking (place-kicking + punting) ---
+  fgMade   Int @default(0) @map("fg_made")
+  fgAtt    Int @default(0) @map("fg_att")
+  fgLong   Int @default(0) @map("fg_long")
+  xpMade   Int @default(0) @map("xp_made")
+  xpAtt    Int @default(0) @map("xp_att")
+  punts    Int @default(0)
+  puntYds  Int @default(0) @map("punt_yds")
+  puntLong Int @default(0) @map("punt_long")
+
+  // --- Other (returns + fumbles) ---
+  krRet       Int @default(0) @map("kr_ret")
+  krYds       Int @default(0) @map("kr_yds")
+  krTd        Int @default(0) @map("kr_td")
+  prRet       Int @default(0) @map("pr_ret")
+  prYds       Int @default(0) @map("pr_yds")
+  prTd        Int @default(0) @map("pr_td")
+  fumbles     Int @default(0)
+  fumblesLost Int @default(0) @map("fumbles_lost")
+
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, playerId])
+  @@map("game_player_stats")
+}
+
+/// Caddo State's team totals for one game (one row per game). These are the
+/// team-level figures a box score reports that aren't simple sums of player
+/// lines (first downs, third-down conversions, penalties, time of possession).
+/// Season team totals are a SQL view over these rows.
+model GameTeamStat {
+  id     Int @id @default(autoincrement())
+  gameId Int @unique @map("game_id")
+
+  // --- Offensive ---
+  firstDowns       Int @default(0) @map("first_downs")
+  totalPlays       Int @default(0) @map("total_plays")
+  totalYards       Int @default(0) @map("total_yards")
+  passYds          Int @default(0) @map("pass_yds")
+  rushYds          Int @default(0) @map("rush_yds")
+  thirdDownConv    Int @default(0) @map("third_down_conv")
+  thirdDownAtt     Int @default(0) @map("third_down_att")
+  fourthDownConv   Int @default(0) @map("fourth_down_conv")
+  fourthDownAtt    Int @default(0) @map("fourth_down_att")
+  penalties        Int @default(0)
+  penaltyYds       Int @default(0) @map("penalty_yds")
+  turnovers        Int @default(0)
+  timeOfPossession Int @default(0) @map("time_of_possession_sec")
+
+  // --- Defensive ---
+  sacks          Float @default(0)
+  tacklesForLoss Float @default(0) @map("tackles_for_loss")
+  takeaways      Int   @default(0)
+  defTd          Int   @default(0) @map("def_td")
+
+  // --- Kicking ---
+  fgMade  Int @default(0) @map("fg_made")
+  fgAtt   Int @default(0) @map("fg_att")
+  xpMade  Int @default(0) @map("xp_made")
+  xpAtt   Int @default(0) @map("xp_att")
+  punts   Int @default(0)
+  puntYds Int @default(0) @map("punt_yds")
+
+  // --- Other ---
+  returnYds Int @default(0) @map("return_yds")
+  returnTd  Int @default(0) @map("return_td")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@map("game_team_stats")
+}

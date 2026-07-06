@@ -6,3 +6,8 @@
 
 # Computational caches and temporary freezing mechanisms
 */_freeze/
+
+*/node_modules
+
+#Ignore pg-data
+pg-data
