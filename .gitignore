@@ -11,3 +11,6 @@
 
 #Ignore pg-data
 pg-data
+
+#The env file...
+*.env
