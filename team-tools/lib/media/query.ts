@@ -67,24 +67,67 @@ const listSelect = {
 } as const;
 
 /** All media, newest first (the global inbox). */
-export async function listAllMedia(): Promise<MediaListItem[]> {
-  const rows = await db.media.findMany({
-    orderBy: { createdAt: "desc" },
-    select: listSelect,
-  });
-  return rows.map(toItem);
+export const DEFAULT_PAGE_SIZE = 10;
+export const MAX_PAGE_SIZE = 100;
+
+/** Coerce an untrusted page size into [1, 100], defaulting to 10. */
+export function clampPageSize(n: unknown): number {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return DEFAULT_PAGE_SIZE;
+  return Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(v)));
 }
 
-/** Media anchored to a season: its team stories plus any of its games' recaps. */
-export async function listSeasonMedia(seasonId: number): Promise<MediaListItem[]> {
+/** Which slice of media a list wants. Serializable, so it crosses the client
+ *  boundary and back into the load-more server action. */
+export type MediaQuery =
+  | { kind: "all" }
+  | { kind: "unviewed" }
+  | { kind: "season"; seasonId: number }
+  | { kind: "player"; playerId: number };
+
+function whereFor(q: MediaQuery) {
+  switch (q.kind) {
+    case "unviewed":
+      return { viewed: false, status: "READY" as const };
+    case "season":
+      return { OR: [{ seasonId: q.seasonId }, { game: { seasonId: q.seasonId } }] };
+    case "player":
+      // As the primary subject OR tagged into a multi-player piece. Reader view →
+      // finished pieces only.
+      return {
+        status: "READY" as const,
+        OR: [{ playerId: q.playerId }, { tags: { some: { playerId: q.playerId } } }],
+      };
+    case "all":
+    default:
+      return {};
+  }
+}
+
+export type MediaPage = { items: MediaListItem[]; nextCursor: number | null };
+
+/**
+ * One page of media, latest first. Cursor-based on the (monotonic) id: pass the
+ * previous page's `nextCursor` to get the next slice; `nextCursor` is null when
+ * the list is exhausted. Over-fetches by one to know if more remain.
+ */
+export async function fetchMediaPage(
+  q: MediaQuery,
+  pageSize: number,
+  cursor: number | null,
+): Promise<MediaPage> {
+  const take = clampPageSize(pageSize);
   const rows = await db.media.findMany({
-    where: {
-      OR: [{ seasonId }, { game: { seasonId } }],
-    },
-    orderBy: { createdAt: "desc" },
+    where: whereFor(q),
+    orderBy: { id: "desc" },
+    take: take + 1,
+    ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: listSelect,
   });
-  return rows.map(toItem);
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const nextCursor = hasMore && page.length ? page[page.length - 1].id : null;
+  return { items: page.map(toItem), nextCursor };
 }
 
 /** Count of unread, ready pieces (drives the nav badge). */

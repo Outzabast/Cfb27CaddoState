@@ -255,6 +255,7 @@ export async function recomputeOverall(
         select: { isStarter: true, seasonNotoriety: true },
         orderBy: { seasonRoster: { season: { startYear: "desc" } } },
       },
+      notorietyEvents: { select: { points: true } },
     },
   });
   if (!player) return;
@@ -271,8 +272,10 @@ export async function recomputeOverall(
     if (v > 0 && v >= (records.get(c.key) ?? 0)) recordBonus += c.record;
   }
   const longevity = Math.min(10, player.seasonPlayers.length * 2);
+  // Manually-attributed notoriety events add on top (non-negative).
+  const manual = player.notorietyEvents.reduce((s, e) => s + Math.max(0, e.points), 0);
 
-  const target = Math.max(peakSeason, currentBase) + recordBonus + longevity;
+  const target = Math.max(peakSeason, currentBase) + recordBonus + longevity + manual;
   const next = ratchet(player.overallNotoriety, target);
   if (next !== player.overallNotoriety) {
     await db.player.update({ where: { id: playerId }, data: { overallNotoriety: next } });

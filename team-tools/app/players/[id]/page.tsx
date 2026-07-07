@@ -13,9 +13,10 @@ import {
   PLAYER_STATUS_LABELS,
   PLAYER_STATUS_OPTIONS,
 } from "@/lib/player-profile";
-import { updatePlayerProfile } from "./actions";
+import { updatePlayerProfile, addNotorietyEvent, deleteNotorietyEvent } from "./actions";
 import { PlayerStats, type SeasonStat } from "@/components/player-stats";
-import { NewsTeaser } from "@/components/media/news-teaser";
+import { MediaList } from "@/components/media/media-list";
+import { fetchMediaPage } from "@/lib/media/query";
 import { MediaTriggerFields } from "@/components/media/media-trigger-fields";
 import { SaveForm } from "@/components/save-form";
 import { ResultBadge } from "@/components/result-badge";
@@ -69,6 +70,7 @@ export default async function PlayerDetailPage({
     where: { id: playerId },
     include: {
       seasonPlayers: { include: { seasonRoster: { include: { season: true } } } },
+      notorietyEvents: { orderBy: { createdAt: "desc" } },
     },
     omit: { photo: true },
   });
@@ -77,13 +79,9 @@ export default async function PlayerDetailPage({
   const [{ has: hasPhoto }] = await db.$queryRaw<{ has: boolean }[]>`
     SELECT photo IS NOT NULL AS has FROM players WHERE id = ${playerId}`;
 
-  // Recent generated articles about this player.
-  const news = await db.media.findMany({
-    where: { playerId, status: "READY" },
-    orderBy: { createdAt: "desc" },
-    take: 4,
-    select: { id: true, headline: true, viewed: true },
-  });
+  // Recent articles about this player — as the primary subject OR tagged into a
+  // multi-player piece. Paginated (latest first).
+  const newsPage = await fetchMediaPage({ kind: "player", playerId }, 10, null);
   const personas = await db.authorPersona.findMany({
     where: { active: true },
     orderBy: { name: "asc" },
@@ -297,10 +295,15 @@ export default async function PlayerDetailPage({
         )}
       </section>
 
-      {/* Latest news — player features generated from box scores */}
+      {/* Latest news — articles about this player, paginated */}
       <section className="space-y-3">
         <h2 className="eyebrow !text-foreground">Latest News</h2>
-        <NewsTeaser items={news} viewAllHref="/media" />
+        <MediaList
+          query={{ kind: "player", playerId }}
+          initialItems={newsPage.items}
+          initialCursor={newsPage.nextCursor}
+          emptyText="No articles about this player yet."
+        />
       </section>
 
       {/* Bio / awards / notable events (free text) */}
@@ -313,11 +316,32 @@ export default async function PlayerDetailPage({
           )}
         </div>
       )}
+
+      {/* Notoriety events (structured: description + attributed points) */}
+      {player.notorietyEvents.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="eyebrow !text-foreground">Notoriety Events</h2>
+          <div className="overflow-hidden rounded-md border bg-card">
+            {player.notorietyEvents.map((e) => (
+              <div
+                key={e.id}
+                className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-0"
+              >
+                <span className="text-sm">{e.description}</span>
+                <span className="shrink-0 rounded-md bg-secondary px-2 py-0.5 text-sm font-bold tabular-nums text-primary">
+                  +{e.points}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
         </>
       )}
 
       {/* Edit profile */}
       {isEdit && (
+        <>
       <Card>
         <CardHeader>
           <CardTitle>Edit profile</CardTitle>
@@ -449,6 +473,67 @@ export default async function PlayerDetailPage({
           </SaveForm>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Notoriety events</CardTitle>
+          <CardDescription>
+            Attribute extra notoriety for things the stats don&rsquo;t capture. Each
+            adds its points to the player&rsquo;s program notoriety.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {player.notorietyEvents.length > 0 && (
+            <div className="overflow-hidden rounded-md border">
+              {player.notorietyEvents.map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-0"
+                >
+                  <span className="text-sm">{e.description}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold tabular-nums text-primary">+{e.points}</span>
+                    <SaveForm action={deleteNotorietyEvent} successText="Removed">
+                      <input type="hidden" name="id" value={e.id} />
+                      <input type="hidden" name="playerId" value={playerId} />
+                      <button
+                        type="submit"
+                        className="text-xs font-semibold uppercase tracking-wide text-red-600 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </SaveForm>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <SaveForm
+            action={addNotorietyEvent}
+            successText="Event added"
+            className="flex flex-wrap items-end gap-2"
+          >
+            <input type="hidden" name="playerId" value={playerId} />
+            <div className="grid min-w-48 flex-1 gap-1.5">
+              <Label htmlFor="ne-desc">Event</Label>
+              <Input id="ne-desc" name="description" placeholder="e.g. Named team captain" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ne-points">Notoriety</Label>
+              <Input
+                id="ne-points"
+                name="points"
+                type="number"
+                min={0}
+                defaultValue={10}
+                className="w-24"
+              />
+            </div>
+            <Button type="submit">Add</Button>
+          </SaveForm>
+        </CardContent>
+      </Card>
+        </>
       )}
     </div>
   );

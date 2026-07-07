@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Inbox, Plus, Radio, Settings } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { MediaInbox } from "@/components/media/media-inbox";
-import { listAllMedia, unviewedCount } from "@/lib/media/query";
+import { fetchMediaPage, unviewedCount, type MediaQuery } from "@/lib/media/query";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +13,9 @@ export default async function MediaInboxPage({
   searchParams: Promise<{ view?: string }>;
 }) {
   const unviewedOnly = (await searchParams).view === "unviewed";
-  const [all, unread] = await Promise.all([listAllMedia(), unviewedCount()]);
-  const items = unviewedOnly ? all.filter((m) => !m.viewed && m.status === "READY") : all;
+  const query: MediaQuery = unviewedOnly ? { kind: "unviewed" } : { kind: "all" };
+  const [page, unread] = await Promise.all([fetchMediaPage(query, 10, null), unviewedCount()]);
+  const items = page.items;
 
   return (
     <div className="space-y-6">
@@ -73,7 +74,7 @@ export default async function MediaInboxPage({
           </Link>
         </div>
       ) : (
-        <MediaInbox items={items} />
+        <MediaInbox initialItems={items} initialCursor={page.nextCursor} query={query} />
       )}
     </div>
   );

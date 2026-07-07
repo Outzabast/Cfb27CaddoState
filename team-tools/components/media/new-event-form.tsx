@@ -61,29 +61,27 @@ export function NewEventForm({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <Label htmlFor="subjectId">Subject</Label>
-        <select id="subjectId" name="subjectId" className={selectClass} key={scope}>
-          {scope === "GAME" &&
-            games.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.label}
-              </option>
-            ))}
-          {scope === "TEAM" &&
-            seasons.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          {scope === "PLAYER" &&
-            players.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-        </select>
-      </div>
+      {scope === "PLAYER" ? (
+        <PlayerMultiSelect players={players} name="subjectPlayerId" label="Players this article is about" />
+      ) : (
+        <div className="grid gap-2">
+          <Label htmlFor="subjectId">Subject</Label>
+          <select id="subjectId" name="subjectId" className={selectClass} key={scope}>
+            {scope === "GAME" &&
+              games.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.label}
+                </option>
+              ))}
+            {scope === "TEAM" &&
+              seasons.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
 
       <div className="grid gap-2">
         <Label>Written by</Label>

@@ -71,21 +71,25 @@ export async function processMediaEvent(eventId: number): Promise<void> {
     // Notoriety is a system artifact, recomputed when stats/rosters change — not
     // here. Generation just reads the current values.
 
-    // Subjects to cover: the event's primary subject, plus any tagged players.
-    const targets: Target[] = [
-      {
-        scope: event.scope,
-        playerId: event.playerId,
-        gameId: event.gameId,
-        seasonId: event.seasonId,
-      },
-      ...event.playerIds.map((pid) => ({
-        scope: "PLAYER" as MediaScope,
-        playerId: pid,
-        gameId: null,
-        seasonId: null,
-      })),
-    ];
+    // For a PLAYER event, playerIds are ADDITIONAL SUBJECTS of one article (tagged
+    // onto the piece). For GAME/TEAM, they're separate PLAYER features to fan out.
+    const isPlayerScope = event.scope === "PLAYER";
+    const targets: Target[] = isPlayerScope
+      ? [{ scope: "PLAYER", playerId: event.playerId, gameId: null, seasonId: null }]
+      : [
+          {
+            scope: event.scope,
+            playerId: event.playerId,
+            gameId: event.gameId,
+            seasonId: event.seasonId,
+          },
+          ...event.playerIds.map((pid) => ({
+            scope: "PLAYER" as MediaScope,
+            playerId: pid,
+            gameId: null,
+            seasonId: null,
+          })),
+        ];
     // One piece per persona (empty personas = a single default-voice piece).
     const personas: (number | null)[] = event.personaIds.length ? event.personaIds : [null];
 
@@ -105,6 +109,12 @@ export async function processMediaEvent(eventId: number): Promise<void> {
           },
           select: { id: true },
         });
+        // Tag the extra subject players so the piece is written about all of them.
+        if (isPlayerScope && event.playerIds.length) {
+          await db.mediaTag.createMany({
+            data: event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })),
+          });
+        }
         await runGeneration(media.id);
       }
     }

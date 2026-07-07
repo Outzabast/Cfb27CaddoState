@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE } from "./constants";
 import { writeArticle } from "./agent";
-import { describeGame, describePlayer, describeSeason } from "./subject";
+import { describeGame, describePlayer, describePlayers, describeSeason } from "./subject";
 
 /** Resolve which OpenRouter model writes a given media type. */
 async function resolveModel(mediaType: "ARTICLE"): Promise<string> {
@@ -40,7 +40,11 @@ type MediaRow = {
 };
 
 /** Build the seed message: the subject data + the ids the writer can research. */
-async function buildSeed(media: MediaRow, subject: string): Promise<string> {
+async function buildSeed(
+  media: MediaRow,
+  subject: string,
+  subjectPlayerIds: number[],
+): Promise<string> {
   const out: string[] = [];
   out.push(`Write a ${SCOPE_LABEL[media.scope]} article for Caddo State.`);
   out.push("");
@@ -66,7 +70,19 @@ async function buildSeed(media: MediaRow, subject: string): Promise<string> {
       );
     }
   } else if (media.scope === "PLAYER" && media.playerId != null) {
-    out.push(`- This player: playerId ${media.playerId}`);
+    if (subjectPlayerIds.length > 1) {
+      const names = await db.player.findMany({
+        where: { id: { in: subjectPlayerIds } },
+        select: { id: true, name: true },
+      });
+      const byId = new Map(names.map((n) => [n.id, n.name]));
+      out.push(
+        "- Players this article is about: " +
+          subjectPlayerIds.map((id) => `${byId.get(id) ?? "Unknown"} (playerId ${id})`).join(", "),
+      );
+    } else {
+      out.push(`- This player: playerId ${media.playerId}`);
+    }
   } else if (media.scope === "TEAM" && media.seasonId != null) {
     out.push(`- This season: seasonId ${media.seasonId}`);
   }
@@ -99,10 +115,23 @@ export async function runGeneration(mediaId: number): Promise<void> {
     await db.media.update({ where: { id: mediaId }, data: { status: "GENERATING" } });
 
     let subject: string;
+    let subjectPlayerIds: number[] = [];
     if (media.scope === "GAME" && media.gameId != null) {
       subject = await describeGame(media.gameId);
     } else if (media.scope === "PLAYER" && media.playerId != null) {
-      subject = await describePlayer(media.playerId);
+      // A player article can cover several players (tagged via MediaTag).
+      const tags = await db.mediaTag.findMany({
+        where: { mediaId, playerId: { not: null } },
+        select: { playerId: true },
+      });
+      subjectPlayerIds = [
+        media.playerId,
+        ...tags.map((t) => t.playerId!).filter((id) => id !== media.playerId),
+      ];
+      subject =
+        subjectPlayerIds.length > 1
+          ? await describePlayers(subjectPlayerIds)
+          : await describePlayer(media.playerId);
     } else if (media.scope === "TEAM" && media.seasonId != null) {
       subject = await describeSeason(media.seasonId);
     } else {
@@ -112,7 +141,7 @@ export async function runGeneration(mediaId: number): Promise<void> {
     const model = await resolveModel(media.mediaType);
     const voice = media.authorPersona?.voice || DEFAULT_VOICE;
     const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
-    const seed = await buildSeed(media, subject);
+    const seed = await buildSeed(media, subject, subjectPlayerIds);
 
     const { headline, body, costUsd } = await writeArticle(model, system, seed);
 

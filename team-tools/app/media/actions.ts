@@ -7,9 +7,19 @@ import { db } from "@/lib/db";
 import { runGeneration } from "@/lib/media/generate";
 import { postMediaEvent, processMediaEvent, readIdList } from "@/lib/media/media-space";
 import { MEDIA_TYPES } from "@/lib/media/constants";
+import { fetchMediaPage, type MediaPage, type MediaQuery } from "@/lib/media/query";
 import type { MediaScope, MediaType } from "@/generated/prisma/enums";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
+
+/** Fetch the next page of a media list (cursor-based). Used by "Load more". */
+export async function loadMediaPage(
+  query: MediaQuery,
+  cursor: number | null,
+  pageSize: number,
+): Promise<MediaPage> {
+  return fetchMediaPage(query, pageSize, cursor);
+}
 
 /** Mark a piece as read (clears its unviewed badge in the inbox). */
 export async function markMediaViewed(id: number): Promise<void> {
@@ -132,20 +142,36 @@ export async function createManualEvent(formData: FormData) {
     ? (mediaTypeRaw as MediaType)
     : "ARTICLE";
 
-  const subjectId = Number(formData.get("subjectId"));
-  if (!Number.isInteger(subjectId)) throw new Error("Choose a subject.");
+  const context = String(formData.get("mediaContext") ?? "").trim() || null;
+  const personaIds = readIdList(formData, "mediaPersonaId");
 
-  await postMediaEvent({
-    type: "MANUAL",
-    scope,
-    mediaType,
-    gameId: scope === "GAME" ? subjectId : null,
-    seasonId: scope === "TEAM" ? subjectId : null,
-    playerId: scope === "PLAYER" ? subjectId : null,
-    context: String(formData.get("mediaContext") ?? "").trim() || null,
-    personaIds: readIdList(formData, "mediaPersonaId"),
-    playerIds: readIdList(formData, "mediaPlayerId"),
-  });
+  if (scope === "PLAYER") {
+    // One article about one or more selected players.
+    const subjects = readIdList(formData, "subjectPlayerId");
+    if (subjects.length === 0) throw new Error("Pick at least one player.");
+    await postMediaEvent({
+      type: "MANUAL",
+      scope,
+      mediaType,
+      playerId: subjects[0],
+      playerIds: subjects.slice(1), // additional subjects of the same article
+      context,
+      personaIds,
+    });
+  } else {
+    const subjectId = Number(formData.get("subjectId"));
+    if (!Number.isInteger(subjectId)) throw new Error("Choose a subject.");
+    await postMediaEvent({
+      type: "MANUAL",
+      scope,
+      mediaType,
+      gameId: scope === "GAME" ? subjectId : null,
+      seasonId: scope === "TEAM" ? subjectId : null,
+      context,
+      personaIds,
+      playerIds: readIdList(formData, "mediaPlayerId"), // separate player features
+    });
+  }
 
   revalidatePath("/media");
   revalidatePath("/media/space");

@@ -204,6 +204,15 @@ export async function describePlayer(playerId: number): Promise<string> {
   return out.join("\n");
 }
 
+/** Several players' data for ONE article about them together. */
+export async function describePlayers(ids: number[]): Promise<string> {
+  const blocks = await Promise.all(ids.map((id) => describePlayer(id)));
+  return (
+    `This article is about ${ids.length} players together — give each real attention.\n\n` +
+    blocks.join("\n\n————————\n\n")
+  );
+}
+
 /** A season/team story's data: record and game-by-game results. */
 export async function describeSeason(seasonId: number): Promise<string> {
   const season = await db.season.findUnique({

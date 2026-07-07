@@ -79,13 +79,31 @@ model Player {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  seasonPlayers SeasonPlayer[]
-  gameStats     GamePlayerStat[]
-  media         Media[]
-  mediaTags     MediaTag[]
-  mediaEvents   MediaEvent[]
+  seasonPlayers   SeasonPlayer[]
+  gameStats       GamePlayerStat[]
+  media           Media[]
+  mediaTags       MediaTag[]
+  mediaEvents     MediaEvent[]
+  notorietyEvents NotorietyEvent[]
 
   @@map("players")
+}
+
+/// A manually-attributed notoriety bump: "this happened, and it's worth N to the
+/// player's fame." Added on top of the COMPUTED program (overall) notoriety, so it
+/// survives recompute; delete it and overall eases back down (ratcheted). Distinct
+/// from the free-text `notableEvents` string — this one carries a points value.
+model NotorietyEvent {
+  id          Int      @id @default(autoincrement())
+  playerId    Int      @map("player_id")
+  description String
+  points      Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId])
+  @@map("notoriety_events")
 }
 
 /// A single season, e.g. "2026-2027" spanning startYear -> endYear. Each season

@@ -94,3 +94,29 @@ export async function updatePlayerProfile(formData: FormData) {
 
   revalidatePath(`/players/${playerId}`);
 }
+
+/** Add a manual notoriety event (description + points) to a player. */
+export async function addNotorietyEvent(formData: FormData) {
+  const playerId = Number(formData.get("playerId"));
+  if (!Number.isInteger(playerId)) throw new Error("Bad player id.");
+  const description = String(formData.get("description") ?? "").trim();
+  if (!description) throw new Error("Describe the event.");
+  const raw = Number(formData.get("points") ?? 0);
+  if (!Number.isFinite(raw)) throw new Error("Points must be a number.");
+  const points = Math.max(0, Math.trunc(raw));
+
+  await db.notorietyEvent.create({ data: { playerId, description, points } });
+  after(() => recomputeAll());
+  revalidatePath(`/players/${playerId}`);
+}
+
+/** Remove a manual notoriety event. */
+export async function deleteNotorietyEvent(formData: FormData) {
+  const id = Number(formData.get("id"));
+  const playerId = Number(formData.get("playerId"));
+  if (![id, playerId].every(Number.isInteger)) throw new Error("Bad ids.");
+
+  await db.notorietyEvent.delete({ where: { id } });
+  after(() => recomputeAll());
+  revalidatePath(`/players/${playerId}`);
+}
