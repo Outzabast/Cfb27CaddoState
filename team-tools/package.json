@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:dump": "node scripts/db-dump.mjs",
+    "db:restore": "node scripts/db-restore.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 
 /generated/prisma
+
+# database backups (SQL dumps). Force-add a specific one to snapshot it in git:
+#   git add -f backups/<file>.sql
