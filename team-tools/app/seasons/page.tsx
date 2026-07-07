@@ -130,9 +130,13 @@ export default async function SeasonsPage() {
             successText="Season created"
             className="grid gap-4 sm:grid-cols-3"
           >
-            <div className="grid gap-2 sm:col-span-3">
+            <div className="grid gap-2 sm:col-span-2">
               <Label htmlFor="name">Name</Label>
               <Input id="name" name="name" placeholder="2026-2027" required />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="conference">Conference</Label>
+              <Input id="conference" name="conference" placeholder="Sun Belt" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="startYear">Start year</Label>

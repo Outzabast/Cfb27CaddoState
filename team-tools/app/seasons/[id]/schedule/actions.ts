@@ -54,6 +54,7 @@ export async function createGame(formData: FormData) {
       date: parseDate(formData),
       opponent: parseOpponent(formData),
       location: parseLocation(formData),
+      isConference: formData.get("isConference") != null,
       teamPoints: parseOptionalInt(formData, "teamPoints") ?? 0,
       oppPoints: parseOptionalInt(formData, "oppPoints") ?? 0,
     },
@@ -80,6 +81,7 @@ export async function updateGame(formData: FormData) {
       date: parseDate(formData),
       opponent: parseOpponent(formData),
       location: parseLocation(formData),
+      isConference: formData.get("isConference") != null,
     },
   });
 

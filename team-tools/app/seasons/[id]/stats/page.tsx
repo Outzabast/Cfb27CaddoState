@@ -11,6 +11,7 @@ import {
   seasonTeamSections,
   type TeamSeasonTotals,
 } from "@/lib/season-stats";
+import { computeRecord, formatRecord } from "@/lib/season-record";
 import type { BoxLine } from "@/lib/box-score";
 import { SeasonNav } from "@/components/season-nav";
 import { SeasonPicker } from "@/components/season-stats/season-picker";
@@ -79,42 +80,50 @@ export default async function TeamStatsPage({
     } as BoxLine;
   });
 
-  // --- Season team totals (SUM of per-game GameTeamStat rows) ---
+  // --- Season team totals + OPPONENT totals (SUM of per-game rows) ---
   const { sum: tSum } = aggregateSelect(TEAM_STAT_GROUPS);
-  const teamAgg = await db.gameTeamStat.aggregate({
-    where: { game: { seasonId } },
+  const [teamAgg, oppAgg, oppCount] = await Promise.all([
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _sum: tSum as any,
-  });
+    db.gameTeamStat.aggregate({ where: { game: { seasonId } }, _sum: tSum as any }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    db.gameOppStat.aggregate({ where: { game: { seasonId } }, _sum: tSum as any }),
+    db.gameOppStat.count({ where: { game: { seasonId } } }),
+  ]);
   const teamTotals = mergeAggregate(teamAgg, TEAM_STAT_GROUPS) as unknown as TeamSeasonTotals;
+  const oppTotals = mergeAggregate(oppAgg, TEAM_STAT_GROUPS) as unknown as TeamSeasonTotals;
+  const hasOpp = oppCount > 0;
 
-  // --- Record + points from the scoreboard (played games only) ---
+  // --- Record (overall + conference) from the scoreboard ---
   const games = await db.game.findMany({
     where: { seasonId },
-    select: { teamPoints: true, oppPoints: true },
+    select: { teamPoints: true, oppPoints: true, isConference: true },
   });
-  let wins = 0,
-    losses = 0,
-    ties = 0,
-    pointsFor = 0,
-    pointsAgainst = 0,
-    gamesPlayed = 0;
-  for (const g of games) {
-    pointsFor += g.teamPoints;
-    pointsAgainst += g.oppPoints;
-    if (g.teamPoints === 0 && g.oppPoints === 0) continue; // unplayed
-    gamesPlayed++;
-    if (g.teamPoints > g.oppPoints) wins++;
-    else if (g.teamPoints < g.oppPoints) losses++;
-    else ties++;
-  }
-  const record = ties > 0 ? `${wins}-${losses}-${ties}` : `${wins}-${losses}`;
+  const rec = computeRecord(games);
+  const gamesPlayed = rec.gamesPlayed;
 
-  const sections = seasonTeamSections(teamTotals, lines, {
-    gamesPlayed,
-    pointsFor,
-    pointsAgainst,
-  });
+  const sections = seasonTeamSections(
+    teamTotals,
+    lines,
+    { gamesPlayed, pointsFor: rec.pointsFor, pointsAgainst: rec.pointsAgainst },
+    hasOpp ? oppTotals : null,
+  );
+
+  // Headline stat cards: record, our per-game passing/rushing, per-game passing/
+  // rushing given up, and our defensive sacks + interceptions.
+  const per = (v: number) => (gamesPlayed > 0 ? (v / gamesPlayed).toFixed(1) : "0.0");
+  const defInt = lines.reduce((a, l) => a + l.defInt, 0);
+  const headline: { label: string; value: string | number }[] = [
+    { label: "Record", value: formatRecord(rec) },
+    { label: "Pass Yds / G", value: per(teamTotals.passYds) },
+    { label: "Rush Yds / G", value: per(teamTotals.rushYds) },
+    { label: "Pass Yds Allowed / G", value: hasOpp ? per(oppTotals.passYds) : "—" },
+    { label: "Rush Yds Allowed / G", value: hasOpp ? per(oppTotals.rushYds) : "—" },
+    {
+      label: "Sacks",
+      value: Number.isInteger(teamTotals.sacks) ? teamTotals.sacks : teamTotals.sacks.toFixed(1),
+    },
+    { label: "Interceptions", value: defInt },
+  ];
 
   const subTabs = [
     { key: "players", label: "Players", href: `/seasons/${seasonId}/stats` },
@@ -133,11 +142,11 @@ export default async function TeamStatsPage({
         <SeasonNav seasonId={seasonId} active="stats" />
       </div>
 
-      {/* Record summary — kept visible on both tabs */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <StatTile label="Record" value={record} />
-        <StatTile label="Points For" value={pointsFor} />
-        <StatTile label="Points Against" value={pointsAgainst} />
+      {/* Headline stat cards — visible on both tabs. Record shows overall (conf). */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {headline.map((h) => (
+          <StatTile key={h.label} label={h.label} value={h.value} />
+        ))}
       </div>
 
       {/* Players / Team sub-tabs */}

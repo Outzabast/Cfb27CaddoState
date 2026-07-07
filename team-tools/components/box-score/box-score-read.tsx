@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
   BOX_CATEGORIES,
-  teamStatRows,
+  teamCompareRows,
   type BoxLine,
   type TeamTotals,
 } from "@/lib/box-score";
@@ -154,17 +154,19 @@ export function BoxScoreRead({
   game,
   lines,
   teamStats,
+  oppStats,
 }: {
   game: Game;
   lines: BoxLine[];
   teamStats: TeamTotals | null;
+  oppStats: TeamTotals | null;
 }) {
   const categories = BOX_CATEGORIES.map((cat) => ({
     cat,
     rows: lines.filter((l) => cat.eligible(l)),
   })).filter((c) => c.rows.length > 0);
 
-  const teamRows = teamStats ? teamStatRows(teamStats, lines) : [];
+  const teamRows = teamStats ? teamCompareRows(teamStats, oppStats, lines) : [];
 
   return (
     <div className="space-y-6">
@@ -182,13 +184,20 @@ export function BoxScoreRead({
         </div>
       )}
 
-      {/* Team stats */}
+      {/* Team stats — us vs opponent */}
       <div className="overflow-hidden rounded-md border bg-card">
         <div className="px-4 py-2.5">
           <h3 className="eyebrow !text-foreground">Team Stats</h3>
         </div>
         {teamStats ? (
           <table className="w-full text-sm">
+            <thead>
+              <tr className="eyebrow border-t">
+                <th className="px-4 py-2 text-left font-bold"></th>
+                <th className="px-4 py-2 text-right font-bold">{TEAM}</th>
+                <th className="px-4 py-2 text-right font-bold">{game.opponent}</th>
+              </tr>
+            </thead>
             <tbody>
               {teamRows.map((r, i) => (
                 <tr
@@ -198,7 +207,10 @@ export function BoxScoreRead({
                   <td className={`px-4 py-2 ${r.sub ? "pl-8 text-muted-foreground" : ""}`}>
                     {r.label}
                   </td>
-                  <td className="px-4 py-2 text-right tabular-nums">{r.value}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{r.us}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {r.them}
+                  </td>
                 </tr>
               ))}
             </tbody>

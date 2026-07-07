@@ -193,11 +193,12 @@ export function parseDuration(raw: string): number {
 export function parseStats(
   formData: FormData,
   groups: StatGroup[],
+  namePrefix = "",
 ): Record<string, number> {
   const out: Record<string, number> = {};
   for (const group of groups) {
     for (const f of group.fields) {
-      const raw = String(formData.get(f.name) ?? "").trim();
+      const raw = String(formData.get(`${namePrefix}${f.name}`) ?? "").trim();
       if (f.format === "duration") {
         out[f.name] = parseDuration(raw);
         continue;

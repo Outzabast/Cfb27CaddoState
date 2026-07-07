@@ -16,7 +16,7 @@ import {
   aggregateSelect,
   mergeAggregate,
 } from "@/lib/stat-fields";
-import type { PlayerStatus } from "@/generated/prisma/enums";
+import type { PlayerStatus, StaffRole } from "@/generated/prisma/enums";
 
 // ---- Baselines ----
 const BASE_POSTACTIVE = 0; // off the active roster
@@ -174,11 +174,131 @@ export async function recomputeGame(gameId: number): Promise<void> {
   await recomputeAll();
 }
 
-/** Recompute season + overall notoriety for every player on every season roster.
- *  The correct pass whenever program records may have moved. */
+/** Recompute season + overall notoriety for every player on every season roster,
+ *  plus staff. The correct pass whenever program records may have moved. */
 export async function recomputeAll(): Promise<void> {
   const seasons = await db.season.findMany({ select: { id: true } });
   for (const s of seasons) await recomputeSeason(s.id);
+  await recomputeStaffAll();
+}
+
+// ---------------------------------------------------------------------------
+// Staff notoriety — role baseline + team performance + longevity, ratcheted.
+// No game scope (staff aren't per-game). Performance is read from season results:
+// record for everyone, offense output for the OC, points allowed for the DC.
+// ---------------------------------------------------------------------------
+
+function staffRoleBase(role: StaffRole | undefined): number {
+  switch (role) {
+    case "HEAD_COACH":
+      return 60;
+    case "OFFENSIVE_COORDINATOR":
+    case "DEFENSIVE_COORDINATOR":
+      return 50;
+    default:
+      return 40;
+  }
+}
+
+type TeamAgg = {
+  gp: number;
+  wins: number;
+  pf: number;
+  pa: number;
+  offYards: number;
+  oppYards: number; // yards given up (from opponent team stats), 0 if unentered
+};
+
+async function seasonTeamAgg(seasonId: number): Promise<TeamAgg> {
+  const games = await db.game.findMany({
+    where: { seasonId },
+    select: {
+      teamPoints: true,
+      oppPoints: true,
+      teamStats: { select: { totalYards: true } },
+      oppStats: { select: { totalYards: true } },
+    },
+  });
+  const agg: TeamAgg = { gp: 0, wins: 0, pf: 0, pa: 0, offYards: 0, oppYards: 0 };
+  for (const g of games) {
+    if (g.teamPoints === 0 && g.oppPoints === 0) continue; // unplayed
+    agg.gp++;
+    agg.pf += g.teamPoints;
+    agg.pa += g.oppPoints;
+    agg.offYards += g.teamStats?.totalYards ?? 0;
+    agg.oppYards += g.oppStats?.totalYards ?? 0;
+    if (g.teamPoints > g.oppPoints) agg.wins++;
+  }
+  return agg;
+}
+
+function staffSeasonTarget(role: StaffRole, agg: TeamAgg): number {
+  let bonus = Math.min(20, agg.wins * 3); // shared: winning reflects on all staff
+  if (agg.gp > 0 && agg.wins / agg.gp >= 0.5) bonus += 5;
+
+  if (role === "HEAD_COACH") {
+    bonus += Math.min(15, agg.wins * 2); // the head coach owns the record most
+  } else if (role === "OFFENSIVE_COORDINATOR" && agg.gp > 0) {
+    const ppg = agg.pf / agg.gp;
+    const ypg = agg.offYards / agg.gp;
+    bonus += Math.min(20, ppg / 2 + ypg / 50);
+  } else if (role === "DEFENSIVE_COORDINATOR" && agg.gp > 0) {
+    const ppgAllowed = agg.pa / agg.gp;
+    let d = Math.max(0, 35 - ppgAllowed); // fewer points allowed = better
+    if (agg.oppYards > 0) {
+      const ypgAllowed = agg.oppYards / agg.gp; // fewer yards allowed = better
+      d += Math.max(0, (400 - ypgAllowed) / 20);
+    }
+    bonus += Math.min(20, d);
+  }
+  return staffRoleBase(role) + bonus;
+}
+
+/** Recompute seasonNotoriety for a season's staff, then their overall scores. */
+export async function recomputeSeasonStaff(seasonId: number): Promise<void> {
+  const rows = await db.seasonStaff.findMany({ where: { seasonId } });
+  if (rows.length === 0) return;
+  const agg = await seasonTeamAgg(seasonId);
+
+  for (const r of rows) {
+    const next = ratchet(r.seasonNotoriety, staffSeasonTarget(r.role, agg));
+    if (next !== r.seasonNotoriety) {
+      await db.seasonStaff.update({ where: { id: r.id }, data: { seasonNotoriety: next } });
+    }
+  }
+
+  for (const staffId of [...new Set(rows.map((r) => r.staffId))]) {
+    await recomputeStaffOverall(staffId);
+  }
+}
+
+/** Recompute a staff member's program-wide notoriety: peak season + longevity. */
+export async function recomputeStaffOverall(staffId: number): Promise<void> {
+  const staff = await db.staff.findUnique({
+    where: { id: staffId },
+    select: {
+      overallNotoriety: true,
+      seasonStaff: {
+        select: { role: true, seasonNotoriety: true },
+        orderBy: { season: { startYear: "desc" } },
+      },
+    },
+  });
+  if (!staff) return;
+
+  const peak = staff.seasonStaff.reduce((m, s) => Math.max(m, s.seasonNotoriety), 0);
+  const currentBase = staffRoleBase(staff.seasonStaff[0]?.role);
+  const longevity = Math.min(10, staff.seasonStaff.length * 2);
+  const next = ratchet(staff.overallNotoriety, Math.max(peak, currentBase) + longevity);
+  if (next !== staff.overallNotoriety) {
+    await db.staff.update({ where: { id: staffId }, data: { overallNotoriety: next } });
+  }
+}
+
+/** Recompute notoriety for all staff across all seasons. */
+export async function recomputeStaffAll(): Promise<void> {
+  const seasons = await db.season.findMany({ select: { id: true } });
+  for (const s of seasons) await recomputeSeasonStaff(s.id);
 }
 
 /**

@@ -276,3 +276,42 @@ export function teamStatRows(team: TeamTotals, lines: BoxLine[]): TeamStatRow[] 
     { label: "Possession", value: formatDuration(team.timeOfPossession) },
   ];
 }
+
+export type TeamCompareRow = {
+  label: string;
+  us: string | number;
+  them: string | number;
+  sub?: boolean;
+};
+
+/**
+ * The team-stat comparison as two columns (us vs opponent). Our column keeps the
+ * player-derived detail (comp-att, INTs thrown, ...); the opponent has only team
+ * totals, so player-derived rows show "—" for them. `opp` null → all "—".
+ */
+export function teamCompareRows(
+  team: TeamTotals,
+  opp: TeamTotals | null,
+  lines: BoxLine[],
+): TeamCompareRow[] {
+  const us = teamStatRows(team, lines);
+  const oppByLabel: Record<string, string | number> = opp
+    ? {
+        "1st Downs": opp.firstDowns,
+        "3rd down efficiency": `${opp.thirdDownConv}-${opp.thirdDownAtt}`,
+        "4th down efficiency": `${opp.fourthDownConv}-${opp.fourthDownAtt}`,
+        "Total Yards": opp.totalYards,
+        Passing: opp.passYds,
+        Rushing: opp.rushYds,
+        Penalties: `${opp.penalties}-${opp.penaltyYds}`,
+        Turnovers: opp.turnovers,
+        Possession: formatDuration(opp.timeOfPossession),
+      }
+    : {};
+  return us.map((r) => ({
+    label: r.label,
+    us: r.value,
+    them: r.label in oppByLabel ? oppByLabel[r.label] : "—",
+    sub: r.sub,
+  }));
+}

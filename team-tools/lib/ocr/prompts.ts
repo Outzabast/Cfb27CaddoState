@@ -66,24 +66,26 @@ Include every game row you can read. If several images are given, return all gam
     case "teamStats":
       return {
         system: SHARED_RULES,
-        instruction: `This is a single game's box score for the user's team (Caddo State). Output:
+        instruction: `This is a single game's box score. It shows a TEAM STATS comparison with TWO columns: the user's team (Caddo State) and the OPPONENT. Read BOTH columns. Output:
 {
   "scoreboard": { "teamQ1": number, "teamQ2": number, "teamQ3": number, "teamQ4": number, "teamOt": number,
                   "oppQ1": number, "oppQ2": number, "oppQ3": number, "oppQ4": number, "oppOt": number } | null,
-  "stats": { <field>: number, ... }
+  "stats": { <field>: number, ... },
+  "oppStats": { <field>: number, ... }
 }
 SCOREBOARD (only if a quarter-by-quarter score line is visible; otherwise use null):
 - "team" = the Caddo State row, "opp" = the opponent row. Read each quarter (1-4) and OT.
 - Omit "teamOt"/"oppOt" (or use 0) if the game did not go to overtime. Omit any quarter not shown.
 TEAM STATS — use ONLY these field keys (omit any you cannot read):
 ${statFieldList(TEAM_STAT_GROUPS)}
+- "stats" = the CADDO STATE column. "oppStats" = the OPPONENT column, using the SAME field keys.
+- If only one team's column is visible, fill only that team's object and leave the other empty ({}).
 Notes:
 - Time of possession (timeOfPossession) is a string "mm:ss".
 - If a stat is shown as made/attempts (e.g. 3rd down "9-18", FG "2/3"), split it into the two keys (thirdDownConv=9, thirdDownAtt=18; fgMade=2, fgAtt=3).
 - If a stat is a triple like "Rushes-Yards-TDs 36-135-1", map ONLY the fields that exist here — use the Yards value for rushYds (there is no team rush-attempts or rush-TD field).
 - "Passing Yards" -> passYds. All other values are plain numbers.
-- The team stats may be split across several images (the user scrolls). Combine them into ONE "stats" object; read the "scoreboard" from whichever image shows it.
-Use the Caddo State column when two teams' columns are shown.`,
+- Stats may be split across several images (the user scrolls). Combine them into ONE "stats" and ONE "oppStats" object; read the "scoreboard" from whichever image shows it.`,
       };
 
     case "playerStats":

@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
 import { attachPlayerToRoster } from "@/lib/player-roster";
 import { postMediaEvent, readIdList } from "@/lib/media/media-space";
-import { recomputeGame } from "@/lib/notoriety";
+import { recomputeGame, recomputeStaffAll } from "@/lib/notoriety";
 import type { PlayerClass } from "@/generated/prisma/enums";
 import { SCOREBOARD_FIELDS, type OcrScoreboard } from "@/lib/ocr/kinds";
 import {
@@ -65,11 +65,13 @@ export async function updateScoreboard(formData: FormData) {
     },
   });
 
+  // Record + points scored/allowed drive staff notoriety.
+  after(() => recomputeStaffAll());
   revalidatePath(path);
   revalidatePath(`/seasons/${seasonId}/schedule`);
 }
 
-/** Create or replace this game's team stat totals. */
+/** Create or replace this game's team stat totals (Caddo State). */
 export async function upsertTeamStats(formData: FormData) {
   const { gameId, path } = baseIds(formData);
   const data = parseStats(formData, TEAM_STAT_GROUPS);
@@ -80,6 +82,22 @@ export async function upsertTeamStats(formData: FormData) {
     update: data,
   });
 
+  after(() => recomputeStaffAll()); // offense output → OC notoriety
+  revalidatePath(path);
+}
+
+/** Create or replace this game's OPPONENT team stat totals (yards/points given up). */
+export async function upsertOppStats(formData: FormData) {
+  const { gameId, path } = baseIds(formData);
+  const data = parseStats(formData, TEAM_STAT_GROUPS);
+
+  await db.gameOppStat.upsert({
+    where: { gameId },
+    create: { gameId, ...data },
+    update: data,
+  });
+
+  after(() => recomputeStaffAll()); // yards allowed → DC notoriety
   revalidatePath(path);
 }
 
@@ -142,6 +160,7 @@ export async function commitOcrBoxScore(
   seasonId: number,
   gameId: number,
   stats: Record<string, number>,
+  oppStats: Record<string, number>,
   scoreboard: OcrScoreboard | null,
 ) {
   if (![seasonId, gameId].every(Number.isInteger)) throw new Error("Bad ids.");
@@ -153,6 +172,17 @@ export async function commitOcrBoxScore(
     create: { gameId, ...teamData },
     update: teamData,
   });
+
+  // Opponent team totals (only when something was read).
+  const oppData = pickStats(oppStats, TEAM_STAT_GROUPS);
+  if (Object.keys(oppData).length > 0) {
+    await db.gameOppStat.upsert({
+      where: { gameId },
+      create: { gameId, ...oppData },
+      update: oppData,
+    });
+  }
+  after(() => recomputeStaffAll());
 
   if (scoreboard && SCOREBOARD_FIELDS.some((f) => scoreboard[f] != null)) {
     const q = (f: keyof OcrScoreboard) => {

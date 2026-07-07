@@ -10,6 +10,7 @@ import {
 import type { BoxLine } from "@/lib/box-score";
 import {
   upsertTeamStats,
+  upsertOppStats,
   upsertPlayerStat,
   zeroOutRoster,
   generateGameArticle,
@@ -51,6 +52,7 @@ export default async function BoxScorePage({
     include: {
       season: true,
       teamStats: true,
+      oppStats: true,
       playerStats: { include: { player: true } },
     },
   });
@@ -180,7 +182,12 @@ export default async function BoxScorePage({
       )}
 
       {!isEdit ? (
-        <BoxScoreRead game={game} lines={lines} teamStats={game.teamStats} />
+        <BoxScoreRead
+          game={game}
+          lines={lines}
+          teamStats={game.teamStats}
+          oppStats={game.oppStats}
+        />
       ) : (
         <>
           {/* ---- Scoreboard (score by quarter) ---- */}
@@ -229,6 +236,34 @@ export default async function BoxScorePage({
                   pcts={TEAM_PCTS}
                 />
                 <Button type="submit">Save team stats</Button>
+              </SaveForm>
+            </CardContent>
+          </Card>
+
+          {/* ---- Opposing team stats ---- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Opposing team stats</CardTitle>
+              <CardDescription>
+                {game.opponent}&rsquo;s team totals — what our defense gave up (yards,
+                first downs, etc.). We don&rsquo;t track opposing player stats.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SaveForm
+                action={upsertOppStats}
+                successText="Opponent stats saved"
+                className="space-y-4"
+              >
+                <input type="hidden" name="seasonId" value={seasonId} />
+                <input type="hidden" name="gameId" value={gid} />
+                <StatFieldGroups
+                  groups={TEAM_STAT_GROUPS}
+                  values={game.oppStats ?? undefined}
+                  idPrefix="opp"
+                  pcts={TEAM_PCTS}
+                />
+                <Button type="submit">Save opponent stats</Button>
               </SaveForm>
             </CardContent>
           </Card>

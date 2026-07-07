@@ -119,6 +119,7 @@ export function seasonTeamSections(
   team: TeamSeasonTotals,
   lines: BoxLine[],
   meta: SeasonMeta,
+  opp: TeamSeasonTotals | null = null,
 ): StatSection[] {
   const g = meta.gamesPlayed;
   const cmp = sum(lines, (l) => l.passCmp);
@@ -129,6 +130,7 @@ export function seasonTeamSections(
   const rushAtt = sum(lines, (l) => l.rushAtt);
   const rushTd = sum(lines, (l) => l.rushTd);
   const fumLost = sum(lines, (l) => l.fumblesLost);
+  const defInt = sum(lines, (l) => l.defInt);
 
   return [
     {
@@ -189,10 +191,34 @@ export function seasonTeamSections(
       rows: [
         { label: "Sacks", value: f1(team.sacks) },
         { label: "Tackles For Loss", value: f1(team.tacklesForLoss) },
+        { label: "Interceptions", value: defInt },
         { label: "Takeaways", value: team.takeaways },
         { label: "Defensive TDs", value: team.defTd },
       ],
     },
+    ...(opp
+      ? [
+          {
+            title: "Defense — Yards Allowed",
+            rows: [
+              { label: "Points Allowed", value: meta.pointsAgainst },
+              { label: "Points Allowed / Game", value: perGame(meta.pointsAgainst, g) },
+              { label: "Total Yards Allowed", value: opp.totalYards },
+              { label: "Yards Allowed / Game", value: perGame(opp.totalYards, g) },
+              { label: "Passing Yards Allowed", value: opp.passYds },
+              { label: "Passing Allowed / Game", value: perGame(opp.passYds, g) },
+              { label: "Rushing Yards Allowed", value: opp.rushYds },
+              { label: "Rushing Allowed / Game", value: perGame(opp.rushYds, g) },
+              { label: "1st Downs Allowed", value: opp.firstDowns },
+              {
+                label: "Opponent 3rd Down",
+                value: `${opp.thirdDownConv}-${opp.thirdDownAtt} (${formatPct(opp.thirdDownConv, opp.thirdDownAtt)})`,
+              },
+              { label: "Takeaways (Opp Turnovers)", value: opp.turnovers },
+            ],
+          },
+        ]
+      : []),
     {
       title: "Kicking",
       rows: [

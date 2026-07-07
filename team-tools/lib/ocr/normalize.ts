@@ -173,6 +173,7 @@ export function normalizeResult(kind: OcrKind, raw: unknown): OcrResult {
       return {
         kind,
         stats: normalizeStats((raw as { stats?: unknown })?.stats, TEAM_STAT_GROUPS),
+        oppStats: normalizeStats((raw as { oppStats?: unknown })?.oppStats, TEAM_STAT_GROUPS),
         scoreboard: normalizeScoreboard((raw as { scoreboard?: unknown })?.scoreboard),
       };
     case "playerStats":

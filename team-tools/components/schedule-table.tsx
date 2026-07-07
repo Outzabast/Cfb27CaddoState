@@ -27,6 +27,7 @@ export type GameRow = {
   location: GameLocation;
   teamPoints: number;
   oppPoints: number;
+  isConference: boolean;
 };
 
 type SortKey = "week" | "date" | "opponent" | "location";
@@ -117,7 +118,14 @@ export function ScheduleTable({
               <TableRow>
                 <TableCell>{g.week ?? "—"}</TableCell>
                 <TableCell>{g.date ?? "—"}</TableCell>
-                <TableCell className="font-medium">{g.opponent}</TableCell>
+                <TableCell className="font-medium">
+                  {g.opponent}
+                  {g.isConference && (
+                    <Badge variant="outline" className="ml-2 text-[0.6rem] uppercase">
+                      Conf
+                    </Badge>
+                  )}
+                </TableCell>
                 <TableCell>{LOCATION_LABELS[g.location]}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {r ? `${g.teamPoints}–${g.oppPoints}` : "—"}
@@ -197,6 +205,14 @@ export function ScheduleTable({
                           ))}
                         </select>
                       </LabeledField>
+                      <label className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          name="isConference"
+                          defaultChecked={g.isConference}
+                        />
+                        Conference game
+                      </label>
                       <Button type="submit" size="sm">
                         Save
                       </Button>

@@ -129,6 +129,7 @@ function TeamStatsOcrDialog({
 }) {
   const router = useRouter();
   const [stats, setStats] = useState<Record<string, number>>({});
+  const [oppStats, setOppStats] = useState<Record<string, number>>({});
   const [score, setScore] = useState<OcrScoreboard>({});
   const [importScore, setImportScore] = useState(false);
   const [shots, setShots] = useState(0);
@@ -138,6 +139,7 @@ function TeamStatsOcrDialog({
     if (result.kind !== "teamStats") return;
     setShots((s) => s + 1);
     setStats((prev) => ({ ...prev, ...result.stats }));
+    setOppStats((prev) => ({ ...prev, ...result.oppStats }));
     if (result.scoreboard) {
       setScore((prev) => ({ ...prev, ...result.scoreboard }));
       setImportScore(true);
@@ -147,6 +149,7 @@ function TeamStatsOcrDialog({
 
   function reset() {
     setStats({});
+    setOppStats({});
     setScore({});
     setImportScore(false);
     setShots(0);
@@ -173,6 +176,7 @@ function TeamStatsOcrDialog({
         <SaveForm
           action={async (formData) => {
             const parsed = parseStats(formData, TEAM_STAT_GROUPS);
+            const parsedOpp = parseStats(formData, TEAM_STAT_GROUPS, "opp_");
             let scoreboard: OcrScoreboard | null = null;
             if (importScore) {
               scoreboard = {};
@@ -181,7 +185,7 @@ function TeamStatsOcrDialog({
                 scoreboard[f] = Number.isInteger(n) && n >= 0 ? n : 0;
               }
             }
-            await commitOcrBoxScore(seasonId, gameId, parsed, scoreboard);
+            await commitOcrBoxScore(seasonId, gameId, parsed, parsedOpp, scoreboard);
             onOpenChange(false);
             reset();
             router.refresh();
@@ -252,13 +256,33 @@ function TeamStatsOcrDialog({
                   </div>
                 </fieldset>
 
-                {/* Team stats */}
-                <StatFieldGroups
-                  groups={TEAM_STAT_GROUPS}
-                  values={stats}
-                  idPrefix="ocr-team"
-                  pcts={TEAM_PCTS}
-                />
+                {/* Team stats (Caddo State) */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Caddo State
+                  </p>
+                  <StatFieldGroups
+                    groups={TEAM_STAT_GROUPS}
+                    values={stats}
+                    idPrefix="ocr-team"
+                    pcts={TEAM_PCTS}
+                  />
+                </div>
+
+                {/* Opponent team stats */}
+                <div className="space-y-2 border-t pt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Opponent
+                  </p>
+                  <StatFieldGroups
+                    groups={TEAM_STAT_GROUPS}
+                    values={oppStats}
+                    idPrefix="ocr-opp"
+                    namePrefix="opp_"
+                    pcts={TEAM_PCTS}
+                  />
+                </div>
+
                 <p className="text-xs text-muted-foreground">
                   Time of possession is entered as mm:ss ({formatDuration(0)} = none).
                   Blank fields save as 0.

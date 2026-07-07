@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { LOCATION_LABELS, LOCATION_ORDER } from "@/lib/classes";
 import { createGame } from "./actions";
+import { setSeasonConference } from "@/app/seasons/actions";
 import { SaveForm } from "@/components/save-form";
 import { SeasonNav } from "@/components/season-nav";
 import { ScheduleTable, type GameRow } from "@/components/schedule-table";
@@ -51,6 +52,7 @@ export default async function SchedulePage({
     location: g.location,
     teamPoints: g.teamPoints,
     oppPoints: g.oppPoints,
+    isConference: g.isConference,
   }));
 
   return (
@@ -61,6 +63,26 @@ export default async function SchedulePage({
             {season.name} Schedule
           </h1>
           <SeasonNav seasonId={seasonId} active="schedule" />
+          <SaveForm
+            action={setSeasonConference}
+            successText="Conference saved"
+            className="mt-3 flex items-center gap-2"
+          >
+            <input type="hidden" name="seasonId" value={seasonId} />
+            <Label htmlFor="conference" className="text-xs text-muted-foreground">
+              Conference
+            </Label>
+            <Input
+              id="conference"
+              name="conference"
+              defaultValue={season.conference ?? ""}
+              placeholder="e.g. Sun Belt"
+              className="h-8 w-48"
+            />
+            <Button type="submit" size="sm" variant="secondary">
+              Save
+            </Button>
+          </SaveForm>
         </div>
         <ScheduleImportMenu
           seasonId={seasonId}
@@ -110,6 +132,10 @@ export default async function SchedulePage({
                 ))}
               </select>
             </Field>
+            <label className="flex items-center gap-1.5 pb-2 text-sm text-muted-foreground">
+              <input type="checkbox" name="isConference" />
+              Conference
+            </label>
             <Button type="submit">Add game</Button>
           </SaveForm>
         </CardContent>

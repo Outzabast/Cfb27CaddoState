@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { SeasonNav } from "@/components/season-nav";
 import { ResultBadge } from "@/components/result-badge";
 import { NewsTeaser } from "@/components/media/news-teaser";
+import { StaffSection } from "@/components/staff-section";
 
 function result(t: number, o: number): "W" | "L" | "T" | null {
   if (t === 0 && o === 0) return null;
@@ -23,6 +24,7 @@ export default async function SeasonHomePage({
     include: {
       games: { orderBy: [{ week: "asc" }, { date: "asc" }, { id: "asc" }] },
       roster: { include: { _count: { select: { players: true } } } },
+      staff: { orderBy: { role: "asc" } },
     },
   });
   if (!season) notFound();
@@ -147,6 +149,8 @@ export default async function SeasonHomePage({
               <QuickLink href={`/seasons/${seasonId}/schedule`} label="Schedule" note={`${season.games.length} games`} />
             </div>
           </section>
+
+          <StaffSection seasonId={seasonId} staff={season.staff} />
 
           <section className="space-y-3">
             <h2 className="eyebrow !text-foreground">Latest News</h2>

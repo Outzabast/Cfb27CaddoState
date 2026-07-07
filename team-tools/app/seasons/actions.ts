@@ -16,10 +16,22 @@ export async function createSeason(formData: FormData) {
     throw new Error("Start and end year must be whole numbers.");
   }
 
+  const conference = String(formData.get("conference") ?? "").trim() || null;
+
   await db.season.create({
-    data: { name, startYear, endYear, roster: { create: {} } },
+    data: { name, startYear, endYear, conference, roster: { create: {} } },
   });
   revalidatePath("/seasons");
+}
+
+/** Set the conference a season played in (shown on its schedule). */
+export async function setSeasonConference(formData: FormData) {
+  const id = Number(formData.get("seasonId"));
+  if (!Number.isInteger(id)) throw new Error("Bad season id.");
+  const conference = String(formData.get("conference") ?? "").trim() || null;
+
+  await db.season.update({ where: { id }, data: { conference } });
+  revalidatePath(`/seasons/${id}/schedule`);
 }
 
 export async function deleteSeason(formData: FormData) {

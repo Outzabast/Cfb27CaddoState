@@ -63,7 +63,12 @@ export type OcrPlayerStatLine = {
 export type OcrResult =
   | { kind: "roster"; rows: OcrRosterRow[] }
   | { kind: "schedule"; rows: OcrScheduleRow[] }
-  | { kind: "teamStats"; stats: Record<string, number>; scoreboard: OcrScoreboard | null }
+  | {
+      kind: "teamStats";
+      stats: Record<string, number>;
+      oppStats: Record<string, number>;
+      scoreboard: OcrScoreboard | null;
+    }
   | { kind: "playerStats"; lines: OcrPlayerStatLine[] };
 
 export type OcrResponse =

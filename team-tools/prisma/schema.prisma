@@ -113,15 +113,64 @@ model Season {
   name      String   @unique
   startYear Int      @map("start_year")
   endYear   Int      @map("end_year")
+  /// The conference the team played in this season (free text, e.g. "Sun Belt").
+  conference String?
   createdAt DateTime @default(now()) @map("created_at")
 
   roster SeasonRoster?
   games  Game[]
+  staff       SeasonStaff[]
   media       Media[]
   mediaTags   MediaTag[]
   mediaEvents MediaEvent[]
 
   @@map("seasons")
+}
+
+/// A coaching role held for a season. Fixed set for now; extensible later.
+enum StaffRole {
+  HEAD_COACH
+  OFFENSIVE_COORDINATOR
+  DEFENSIVE_COORDINATOR
+
+  @@map("staff_role")
+}
+
+/// A staff member's stable identity (name) + profile. Season-to-season role and
+/// notoriety live on SeasonStaff, mirroring Player/SeasonPlayer. Notoriety applies
+/// to staff too (role baseline + team performance + longevity).
+model Staff {
+  id               Int      @id @default(autoincrement())
+  name             String
+  bio              String?
+  photo            Bytes?
+  /// Program-wide notoriety (unsigned, ratcheted) — see SeasonStaff.seasonNotoriety.
+  overallNotoriety Int      @default(0) @map("overall_notoriety")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  seasonStaff SeasonStaff[]
+
+  @@map("staff")
+}
+
+/// One staff member in one season: their role and that season's notoriety. At most
+/// one person per role per season.
+model SeasonStaff {
+  id              Int       @id @default(autoincrement())
+  seasonId        Int       @map("season_id")
+  staffId         Int       @map("staff_id")
+  /// Denormalized Staff.name for display without a join.
+  staffName       String    @map("staff_name")
+  role            StaffRole
+  seasonNotoriety Int       @default(0) @map("season_notoriety")
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, role])
+  @@index([staffId])
+  @@map("season_staff")
 }
 
 /// The team's roster for one season: the collection of players on the team and
@@ -175,6 +224,8 @@ model Game {
   date       DateTime?    @db.Date
   opponent   String
   location   GameLocation @default(HOME)
+  /// Whether this is a conference game (feeds the conference W-L record).
+  isConference Boolean    @default(false) @map("is_conference")
   // Final score (kept as the source of truth for W/L + season aggregation). When
   // quarter scores are entered, these are set to the sum of the quarters + OT.
   teamPoints Int          @default(0) @map("team_points")
@@ -195,6 +246,7 @@ model Game {
   season      Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
   playerStats GamePlayerStat[]
   teamStats   GameTeamStat?
+  oppStats    GameOppStat?
   media       Media[]
   mediaTags   MediaTag[]
   mediaEvents MediaEvent[]
@@ -322,6 +374,48 @@ model GameTeamStat {
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   @@map("game_team_stats")
+}
+
+/// The OPPONENT's team totals for one game (one row per game). Same shape as
+/// GameTeamStat — we don't track opponent player stats, just these team figures,
+/// which let us measure our defense (yards/points given up). Entered/imported
+/// alongside our own team stats on the box score.
+model GameOppStat {
+  id     Int @id @default(autoincrement())
+  gameId Int @unique @map("game_id")
+
+  firstDowns       Int @default(0) @map("first_downs")
+  totalPlays       Int @default(0) @map("total_plays")
+  totalYards       Int @default(0) @map("total_yards")
+  passYds          Int @default(0) @map("pass_yds")
+  rushYds          Int @default(0) @map("rush_yds")
+  thirdDownConv    Int @default(0) @map("third_down_conv")
+  thirdDownAtt     Int @default(0) @map("third_down_att")
+  fourthDownConv   Int @default(0) @map("fourth_down_conv")
+  fourthDownAtt    Int @default(0) @map("fourth_down_att")
+  penalties        Int @default(0)
+  penaltyYds       Int @default(0) @map("penalty_yds")
+  turnovers        Int @default(0)
+  timeOfPossession Int @default(0) @map("time_of_possession_sec")
+
+  sacks          Float @default(0)
+  tacklesForLoss Float @default(0) @map("tackles_for_loss")
+  takeaways      Int   @default(0)
+  defTd          Int   @default(0) @map("def_td")
+
+  fgMade  Int @default(0) @map("fg_made")
+  fgAtt   Int @default(0) @map("fg_att")
+  xpMade  Int @default(0) @map("xp_made")
+  xpAtt   Int @default(0) @map("xp_att")
+  punts   Int @default(0)
+  puntYds Int @default(0) @map("punt_yds")
+
+  returnYds Int @default(0) @map("return_yds")
+  returnTd  Int @default(0) @map("return_td")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@map("game_opp_stats")
 }
 
 /// What kind of media a piece is. Only ARTICLE ships today; the enum is the seam

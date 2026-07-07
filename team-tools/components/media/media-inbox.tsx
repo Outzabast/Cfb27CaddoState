@@ -81,6 +81,7 @@ export function MediaInbox({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [authorFilter, setAuthorFilter] = useState(""); // "" = all, "none" = no byline, else persona id
   const [typeFilter, setTypeFilter] = useState("");
+  const [tab, setTab] = useState<MediaScope>(() => initialItems[0]?.scope ?? "GAME");
 
   // Filter options drawn from the media present (so only real authors appear).
   const authors = useMemo(() => {
@@ -250,23 +251,42 @@ export function MediaInbox({
         </div>
       )}
 
-      <div className="space-y-5">
-        {GROUPS.map((g) => {
-          const rows = shown.filter((m) => m.scope === g.scope);
-          if (rows.length === 0) return null;
-          return (
-            <section key={g.scope} className="space-y-2">
-              <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+      <div>
+        <div className="flex gap-1 border-b">
+          {GROUPS.map((g) => {
+            const count = shown.filter((m) => m.scope === g.scope).length;
+            return (
+              <button
+                key={g.scope}
+                type="button"
+                onClick={() => setTab(g.scope)}
+                className={cn(
+                  "-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2 pt-1 text-xs font-bold uppercase tracking-wide transition-colors",
+                  tab === g.scope
+                    ? "border-[var(--brand-gold)] text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
                 <g.Icon className="h-3.5 w-3.5" />
                 {g.label}
-                <span className="font-normal normal-case">({rows.length})</span>
-              </h3>
-              <div className="overflow-hidden rounded-md border bg-card">
-                {rows.map(renderItem)}
+                <span className="font-normal">({count})</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 overflow-hidden rounded-md border bg-card">
+          {(() => {
+            const rows = shown.filter((m) => m.scope === tab);
+            return rows.length > 0 ? (
+              rows.map(renderItem)
+            ) : (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Nothing in this tab.
               </div>
-            </section>
-          );
-        })}
+            );
+          })()}
+        </div>
       </div>
 
       {cursor != null && (

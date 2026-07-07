@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { CLASS_LABELS } from "@/lib/classes";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PlayerList } from "@/components/player-list";
+import { countPlayers, fetchPlayersPage } from "@/lib/players-query";
+
+export const dynamic = "force-dynamic";
 
 const selectClass =
   "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
@@ -14,31 +17,16 @@ export default async function PlayersPage({
   searchParams: Promise<{ q?: string; pos?: string; season?: string }>;
 }) {
   const { q, pos, season } = await searchParams;
-  const seasonId = season ? Number(season) : undefined;
+  const filters = { q, pos, season };
 
-  const [players, seasons] = await Promise.all([
-    db.player.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        seasonPlayers: {
-          include: { seasonRoster: { include: { season: true } } },
-        },
-      },
-    }),
+  // Positions/seasons for the filter dropdowns; the list itself is paginated.
+  const [positionRows, seasons, total, firstPage] = await Promise.all([
+    db.seasonPlayer.findMany({ distinct: ["position"], select: { position: true }, orderBy: { position: "asc" } }),
     db.season.findMany({ orderBy: { startYear: "desc" } }),
+    countPlayers(filters),
+    fetchPlayersPage(filters, null),
   ]);
-
-  const allPositions = Array.from(
-    new Set(players.flatMap((p) => p.seasonPlayers.map((sp) => sp.position))),
-  ).sort();
-
-  const filtered = players.filter((p) => {
-    const nameOk = !q || p.name.toLowerCase().includes(q.toLowerCase());
-    const posOk = !pos || p.seasonPlayers.some((sp) => sp.position === pos);
-    const seasonOk =
-      !seasonId || p.seasonPlayers.some((sp) => sp.seasonRoster.seasonId === seasonId);
-    return nameOk && posOk && seasonOk;
-  });
+  const allPositions = positionRows.map((r) => r.position);
 
   return (
     <div className="space-y-6">
@@ -95,37 +83,11 @@ export default async function PlayersPage({
       </form>
 
       <p className="text-sm text-muted-foreground">
-        {filtered.length} of {players.length} players
+        {total} player{total === 1 ? "" : "s"}
+        {(q || pos || season) ? " match" : ""}
       </p>
 
-      {filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No players match.</p>
-      ) : (
-        <ul className="divide-y rounded-md border">
-          {filtered.map((p) => {
-            const spSorted = [...p.seasonPlayers].sort(
-              (a, b) => a.seasonRoster.season.startYear - b.seasonRoster.season.startYear,
-            );
-            const latest = spSorted[spSorted.length - 1];
-            const seasonNames = spSorted.map((sp) => sp.seasonRoster.season.name).join(", ");
-            return (
-              <li key={p.id}>
-                <Link
-                  href={`/players/${p.id}`}
-                  className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-muted/50"
-                >
-                  <span className="font-medium">{p.name}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {latest
-                      ? `${latest.position} · ${CLASS_LABELS[latest.class]} · ${seasonNames}`
-                      : "no seasons"}
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <PlayerList filters={filters} initialItems={firstPage.items} initialCursor={firstPage.nextCursor} />
     </div>
   );
 }

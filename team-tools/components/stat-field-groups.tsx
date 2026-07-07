@@ -20,6 +20,7 @@ export function StatFieldGroups({
   groups,
   values,
   idPrefix,
+  namePrefix = "",
   pcts = [],
 }: {
   groups: StatGroup[];
@@ -27,6 +28,9 @@ export function StatFieldGroups({
    *  Prisma stat row) — only the declared stat fields are read. */
   values?: Record<string, unknown>;
   idPrefix: string;
+  /** Prefix on the input `name` (not the id), so two of these can share a form
+   *  (e.g. team vs opponent). Parse the form with the same prefix. */
+  namePrefix?: string;
   pcts?: DerivedPct[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -38,7 +42,8 @@ export function StatFieldGroups({
     const compute = () => {
       const val = (name: string) =>
         Number(
-          (root.querySelector(`[name="${name}"]`) as HTMLInputElement | null)?.value || 0,
+          (root.querySelector(`[name="${namePrefix}${name}"]`) as HTMLInputElement | null)
+            ?.value || 0,
         );
       const next: Record<string, string> = {};
       for (const p of pcts) next[p.label] = formatPct(val(p.num), val(p.den));
@@ -47,7 +52,7 @@ export function StatFieldGroups({
     compute();
     root.addEventListener("input", compute);
     return () => root.removeEventListener("input", compute);
-  }, [pcts]);
+  }, [pcts, namePrefix]);
 
   return (
     <div ref={ref} className="space-y-3">
@@ -71,7 +76,7 @@ export function StatFieldGroups({
                     </Label>
                     <Input
                       id={id}
-                      name={f.name}
+                      name={`${namePrefix}${f.name}`}
                       type={isDuration ? "text" : "number"}
                       inputMode={isDuration ? "numeric" : undefined}
                       step={isDuration ? undefined : f.float ? "0.5" : "1"}
