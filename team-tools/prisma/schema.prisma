@@ -92,6 +92,9 @@ model SeasonPlayer {
   id             Int         @id @default(autoincrement())
   seasonRosterId Int         @map("season_roster_id")
   playerId       Int         @map("player_id")
+  /// Denormalized copy of Player.name, kept in sync at creation (names are never
+  /// edited after that). Exists so a roster can enforce unique player names.
+  playerName     String      @map("player_name")
   position       String      @db.VarChar(8)
   class          PlayerClass
   number         Int?
@@ -100,6 +103,7 @@ model SeasonPlayer {
   player       Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([seasonRosterId, playerId])
+  @@unique([seasonRosterId, playerName])
   @@map("season_players")
 }
 

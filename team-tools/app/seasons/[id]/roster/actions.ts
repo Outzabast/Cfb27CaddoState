@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
 import { parseRosterRows } from "@/lib/roster-import";
+import { attachPlayerToRoster } from "@/lib/player-roster";
 import type { PlayerClass } from "@/generated/prisma/enums";
 
 const MAX_POSITION_LEN = 8;
@@ -31,7 +32,7 @@ function parseClass(formData: FormData): PlayerClass {
   return value;
 }
 
-/** Create a brand-new player and add them to this season's roster. */
+/** Add a player to this season's roster, reusing an existing player by name. */
 export async function addPlayerToRoster(formData: FormData) {
   const seasonId = Number(formData.get("seasonId"));
   if (!Number.isInteger(seasonId)) throw new Error("Bad season id.");
@@ -43,21 +44,10 @@ export async function addPlayerToRoster(formData: FormData) {
   const playerClass = parseClass(formData);
   const number = parseNumber(formData);
 
-  // Ensure the season has a roster to attach to.
-  const roster = await db.seasonRoster.upsert({
-    where: { seasonId },
-    create: { seasonId },
-    update: {},
-  });
-
-  await db.player.create({
-    data: {
-      name,
-      seasonPlayers: {
-        create: { seasonRosterId: roster.id, position, class: playerClass, number },
-      },
-    },
-  });
+  const rosterId = await getRosterId(seasonId);
+  await db.$transaction((tx) =>
+    attachPlayerToRoster(tx, rosterId, { name, position, class: playerClass, number }),
+  );
 
   revalidatePath(`/seasons/${seasonId}/roster`);
 }
@@ -72,37 +62,27 @@ async function getRosterId(seasonId: number): Promise<number> {
   return roster.id;
 }
 
-/** Bulk-create players on a roster, skipping names already present. */
+/**
+ * Bulk-add players to a roster. Each row reuses an existing player by name (so a
+ * player already on this roster is skipped, and one that exists in another season
+ * is linked rather than duplicated). De-duplicates names within the batch too.
+ */
 async function createPlayers(
   seasonId: number,
   rosterId: number,
   rows: { name: string; position: string; class: PlayerClass; number: number | null }[],
 ) {
-  const existing = await db.seasonPlayer.findMany({
-    where: { seasonRosterId: rosterId },
-    include: { player: { select: { name: true } } },
+  // Collapse duplicate names within this import (first occurrence wins).
+  const seen = new Set<string>();
+  const unique = rows.filter((r) => {
+    const key = r.name.toLowerCase();
+    return seen.has(key) ? false : seen.add(key);
   });
-  const existingNames = new Set(existing.map((e) => e.player.name.toLowerCase()));
-  const toAdd = rows.filter((r) => !existingNames.has(r.name.toLowerCase()));
 
-  if (toAdd.length > 0) {
-    await db.$transaction(
-      toAdd.map((r) =>
-        db.player.create({
-          data: {
-            name: r.name,
-            seasonPlayers: {
-              create: {
-                seasonRosterId: rosterId,
-                position: r.position,
-                class: r.class,
-                number: r.number,
-              },
-            },
-          },
-        }),
-      ),
-    );
+  if (unique.length > 0) {
+    await db.$transaction(async (tx) => {
+      for (const r of unique) await attachPlayerToRoster(tx, rosterId, r);
+    });
   }
   revalidatePath(`/seasons/${seasonId}/roster`);
 }
@@ -241,12 +221,35 @@ export async function updateSeasonPlayer(formData: FormData) {
   revalidatePath(`/seasons/${seasonId}/roster`);
 }
 
-/** Remove a player from this season's roster (keeps the player + other seasons). */
+/**
+ * Remove a player from this season's roster. Keeps the player if they're on
+ * another season's roster or have any recorded stats; otherwise deletes the now
+ * fully-orphaned player so it can't linger and be re-created as a duplicate.
+ */
 export async function removeFromRoster(formData: FormData) {
   const seasonId = Number(formData.get("seasonId"));
   const seasonPlayerId = Number(formData.get("seasonPlayerId"));
   if (![seasonId, seasonPlayerId].every(Number.isInteger)) throw new Error("Bad ids.");
 
-  await db.seasonPlayer.delete({ where: { id: seasonPlayerId } });
+  await db.$transaction(async (tx) => {
+    const sp = await tx.seasonPlayer.findUnique({
+      where: { id: seasonPlayerId },
+      select: { playerId: true },
+    });
+    if (!sp) return;
+
+    await tx.seasonPlayer.delete({ where: { id: seasonPlayerId } });
+
+    const remainingRosters = await tx.seasonPlayer.count({
+      where: { playerId: sp.playerId },
+    });
+    const statLines = await tx.gamePlayerStat.count({
+      where: { playerId: sp.playerId },
+    });
+    if (remainingRosters === 0 && statLines === 0) {
+      await tx.player.delete({ where: { id: sp.playerId } });
+    }
+  });
+
   revalidatePath(`/seasons/${seasonId}/roster`);
 }

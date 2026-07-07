@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
+import { attachPlayerToRoster } from "@/lib/player-roster";
 import type { PlayerClass } from "@/generated/prisma/enums";
 import { SCOREBOARD_FIELDS, type OcrScoreboard } from "@/lib/ocr/kinds";
 import {
@@ -220,20 +221,12 @@ export async function commitOcrPlayerStats(
 
       if (playerId === null && l.newPlayer) {
         const np = l.newPlayer;
-        const created = await tx.player.create({
-          data: {
-            name: np.name.trim(),
-            seasonPlayers: {
-              create: {
-                seasonRosterId: roster.id,
-                position: np.position.trim(),
-                class: np.class as PlayerClass,
-                number: null,
-              },
-            },
-          },
+        playerId = await attachPlayerToRoster(tx, roster.id, {
+          name: np.name.trim(),
+          position: np.position.trim(),
+          class: np.class as PlayerClass,
+          number: null,
         });
-        playerId = created.id;
       }
       if (playerId === null || seen.has(playerId)) continue;
       seen.add(playerId);

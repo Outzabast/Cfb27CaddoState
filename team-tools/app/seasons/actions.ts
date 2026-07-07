@@ -63,6 +63,7 @@ export async function advanceSeason(formData: FormData) {
         data: {
           seasonRosterId: nextRosterId,
           playerId: sp.playerId,
+          playerName: sp.playerName,
           position: sp.position,
           class: nextClass,
           number: sp.number,

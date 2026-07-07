@@ -194,7 +194,7 @@ function ScheduleOcrDialog({
           <OcrFilePicker
             kind="schedule"
             onResult={mergeResult}
-            label={shots === 0 ? "Read screenshot" : "Add another screenshot"}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more screenshots"}
             hint={
               shots > 0
                 ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} game${rows.length === 1 ? "" : "s"}`

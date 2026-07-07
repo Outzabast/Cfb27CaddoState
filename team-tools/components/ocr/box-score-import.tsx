@@ -29,9 +29,9 @@ import {
 import { OcrFilePicker } from "./ocr-file-picker";
 import { StatFieldGroups } from "@/components/stat-field-groups";
 import { SaveForm } from "@/components/save-form";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -52,6 +52,8 @@ export type RosterOption = { playerId: number; name: string; position: string };
 
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
+const invalidRing =
+  "border-destructive ring-3 ring-destructive/20 dark:border-destructive/50 dark:ring-destructive/40";
 const classOptions = CLASS_ORDER.map((c) => ({ value: c, label: CLASS_LABELS[c] }));
 
 export function BoxScoreImportMenu({
@@ -191,11 +193,11 @@ function TeamStatsOcrDialog({
             <OcrFilePicker
               kind="teamStats"
               onResult={mergeResult}
-              label={shots === 0 ? "Read screenshot" : "Add another screenshot"}
+              label={shots === 0 ? "Read screenshot(s)" : "Add more screenshots"}
               hint={
                 shots > 0
                   ? `${shots} screenshot${shots === 1 ? "" : "s"} read`
-                  : "Start with the scoreboard shot, then scroll for more team stats."
+                  : "Select the scoreboard shot and any team-stats shots together, or add them in batches."
               }
             />
 
@@ -286,6 +288,7 @@ function TeamStatsOcrDialog({
 const STAT_LABELS: Record<string, string> = {
   passYds: "pass yds",
   passTd: "pass TD",
+  passInt: "INT",
   rushYds: "rush yds",
   rushTd: "rush TD",
   rec: "rec",
@@ -294,7 +297,7 @@ const STAT_LABELS: Record<string, string> = {
   tacklesSolo: "tkl",
   tacklesForLoss: "TFL",
   sacks: "sacks",
-  defInt: "INT",
+  defInt: "def INT",
   fgMade: "FG",
 };
 
@@ -303,7 +306,7 @@ function summarize(stats: Record<string, number>): string {
   for (const [key, label] of Object.entries(STAT_LABELS)) {
     const v = stats[key];
     if (v) parts.push(`${v} ${label}`);
-    if (parts.length >= 5) break;
+    if (parts.length >= 7) break;
   }
   return parts.join(", ") || "no stats read";
 }
@@ -389,10 +392,20 @@ function PlayerStatsOcrDialog({
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
   const selected = rows.filter((r) => r.include);
+  // One stat line per player per game: count how many included lines target each
+  // existing player so a player can't be assigned to two lines in one import.
+  const assignCount = new Map<string, number>();
+  for (const r of selected) {
+    if (r.assign !== "" && r.assign !== "new") {
+      assignCount.set(r.assign, (assignCount.get(r.assign) ?? 0) + 1);
+    }
+  }
+  const isDupAssign = (r: PlayerEditRow) =>
+    r.include && r.assign !== "" && r.assign !== "new" && (assignCount.get(r.assign) ?? 0) > 1;
   const rowReady = (r: PlayerEditRow) =>
     r.assign === "new"
       ? Boolean(r.newName.trim() && r.newPos.trim() && r.newClass)
-      : r.assign !== "";
+      : r.assign !== "" && !isDupAssign(r);
   const canImport = selected.length > 0 && selected.every(rowReady);
 
   function doImport() {
@@ -441,7 +454,7 @@ function PlayerStatsOcrDialog({
           <OcrFilePicker
             kind="playerStats"
             onResult={mergeResult}
-            label={shots === 0 ? "Read screenshot" : "Add another category"}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more categories"}
             hint={
               shots > 0
                 ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} player${rows.length === 1 ? "" : "s"}`
@@ -451,81 +464,118 @@ function PlayerStatsOcrDialog({
 
           {rows.length > 0 && (
             <div className="space-y-2 border-t pt-3">
-              {rows.map((r) => (
-                <div
-                  key={r.id}
-                  className="grid grid-cols-[1.75rem_1fr] items-start gap-2 rounded-md border p-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={r.include}
-                    onChange={(e) => update(r.id, { include: e.target.checked })}
-                    aria-label={`Import ${r.playerName}`}
-                    className="mt-1 size-4"
-                  />
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        Read as{" "}
-                        <span className="font-medium text-foreground">
-                          {r.playerName || "—"}
-                        </span>
-                      </span>
-                      <span aria-hidden>→</span>
-                      <select
-                        value={r.assign}
-                        onChange={(e) => update(r.id, { assign: e.target.value })}
-                        className={selectClass + " max-w-64"}
-                      >
-                        <option value="">Pick player…</option>
-                        {roster.map((p) => (
-                          <option key={p.playerId} value={p.playerId}>
-                            {p.name} ({p.position})
-                          </option>
-                        ))}
-                        <option value="new">➕ Add new player…</option>
-                      </select>
-                    </div>
-
-                    {r.assign === "new" && (
+              {rows.map((r) => {
+                const isNew = r.assign === "new";
+                const needsFix = r.include && !rowReady(r);
+                const dupInvalid = isDupAssign(r);
+                const assignInvalid = r.include && (r.assign === "" || dupInvalid);
+                const nameInvalid = r.include && isNew && !r.newName.trim();
+                const posInvalid =
+                  r.include && isNew && (!r.newPos.trim() || r.newPos.trim().length > 8);
+                const classInvalid = r.include && isNew && !r.newClass;
+                // Players already claimed by another included line — can't pick them here.
+                const takenByOthers = new Set(
+                  rows
+                    .filter(
+                      (o) => o.id !== r.id && o.include && o.assign !== "" && o.assign !== "new",
+                    )
+                    .map((o) => o.assign),
+                );
+                return (
+                  <div
+                    key={r.id}
+                    className={cn(
+                      "grid grid-cols-[1.75rem_1fr] items-start gap-2 rounded-md border p-2",
+                      needsFix && "border-destructive/60 bg-destructive/5",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={r.include}
+                      onChange={(e) => update(r.id, { include: e.target.checked })}
+                      aria-label={`Import ${r.playerName}`}
+                      className="mt-1 size-4"
+                    />
+                    <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Input
-                          value={r.newName}
-                          onChange={(e) => update(r.id, { newName: e.target.value })}
-                          placeholder="Full name"
-                          className="h-8 w-48"
-                          aria-label="New player name"
-                        />
-                        <Input
-                          value={r.newPos}
-                          onChange={(e) => update(r.id, { newPos: e.target.value })}
-                          placeholder="Pos"
-                          maxLength={8}
-                          className="h-8 w-16"
-                          aria-label="New player position"
-                        />
+                        <span className="text-sm text-muted-foreground">
+                          Read as{" "}
+                          <span className="font-medium text-foreground">
+                            {r.playerName || "—"}
+                          </span>
+                        </span>
+                        <span aria-hidden>→</span>
                         <select
-                          value={r.newClass}
-                          onChange={(e) =>
-                            update(r.id, { newClass: e.target.value as PlayerClass | "" })
-                          }
-                          className={selectClass + " h-8 w-40"}
-                          aria-label="New player class"
+                          value={r.assign}
+                          onChange={(e) => update(r.id, { assign: e.target.value })}
+                          aria-invalid={assignInvalid}
+                          className={cn(selectClass, "max-w-64", assignInvalid && invalidRing)}
                         >
-                          <option value="">Class…</option>
-                          {classOptions.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
+                          <option value="">Pick player…</option>
+                          {roster.map((p) => {
+                            const taken = takenByOthers.has(String(p.playerId));
+                            return (
+                              <option key={p.playerId} value={p.playerId} disabled={taken}>
+                                {p.name} ({p.position}){taken ? " — already imported" : ""}
+                              </option>
+                            );
+                          })}
+                          <option value="new">➕ Add new player…</option>
                         </select>
                       </div>
-                    )}
 
-                    <p className="text-xs text-muted-foreground">{summarize(r.stats)}</p>
+                      {isNew && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Input
+                            value={r.newName}
+                            onChange={(e) => update(r.id, { newName: e.target.value })}
+                            placeholder="Full name"
+                            aria-invalid={nameInvalid}
+                            className="h-8 w-48"
+                            aria-label="New player name"
+                          />
+                          <Input
+                            value={r.newPos}
+                            onChange={(e) => update(r.id, { newPos: e.target.value })}
+                            placeholder="Pos"
+                            maxLength={8}
+                            aria-invalid={posInvalid}
+                            className="h-8 w-16"
+                            aria-label="New player position"
+                          />
+                          <select
+                            value={r.newClass}
+                            onChange={(e) =>
+                              update(r.id, { newClass: e.target.value as PlayerClass | "" })
+                            }
+                            aria-invalid={classInvalid}
+                            className={cn(selectClass, "h-8 w-40", classInvalid && invalidRing)}
+                            aria-label="New player class"
+                          >
+                            <option value="">Class…</option>
+                            {classOptions.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-muted-foreground">{summarize(r.stats)}</p>
+                      {needsFix && (
+                        <p className="text-xs font-medium text-destructive">
+                          {r.assign === ""
+                            ? "Assign this line to a player, or choose “Add new player…”, before importing."
+                            : dupInvalid
+                              ? "This player already has a stat line in this import — pick a different player."
+                              : "Enter the new player’s full name, position, and class."}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {shots > 0 && rows.length === 0 && (

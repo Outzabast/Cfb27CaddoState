@@ -12,6 +12,7 @@ import { matchNameIndex, nameKey } from "@/lib/ocr/name-match";
 import { commitOcrRoster, bulkAddToRoster } from "@/app/seasons/[id]/roster/actions";
 import { OcrFilePicker } from "./ocr-file-picker";
 import { SaveForm } from "@/components/save-form";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -33,6 +34,8 @@ import {
 
 const selectClass =
   "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
+const invalidRing =
+  "border-destructive ring-3 ring-destructive/20 dark:border-destructive/50 dark:ring-destructive/40";
 const classOptions = CLASS_ORDER.map((c) => ({ value: c, label: CLASS_LABELS[c] }));
 
 export function RosterImportMenu({
@@ -189,7 +192,7 @@ function RosterOcrDialog({
           <OcrFilePicker
             kind="roster"
             onResult={mergeResult}
-            label={shots === 0 ? "Read screenshot" : "Add another screenshot"}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more screenshots"}
             hint={
               shots > 0
                 ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} unique player${rows.length === 1 ? "" : "s"}`
@@ -207,63 +210,72 @@ function RosterOcrDialog({
                 <span>Class</span>
                 <span />
               </div>
-              {rows.map((r) => (
-                <div
-                  key={r.id}
-                  className="grid grid-cols-[2rem_1fr_4rem_5rem_11rem_2rem] items-center gap-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={r.include}
-                    onChange={(e) => update(r.id, { include: e.target.checked })}
-                    aria-label={`Import ${r.name}`}
-                    className="size-4"
-                  />
-                  <div className="flex items-center gap-2">
+              {rows.map((r) => {
+                const nameInvalid = r.include && !r.name.trim();
+                const posInvalid =
+                  r.include && (!r.position.trim() || r.position.trim().length > 8);
+                const classInvalid = r.include && !r.class;
+                return (
+                  <div
+                    key={r.id}
+                    className="grid grid-cols-[2rem_1fr_4rem_5rem_11rem_2rem] items-center gap-2"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={r.include}
+                      onChange={(e) => update(r.id, { include: e.target.checked })}
+                      aria-label={`Import ${r.name}`}
+                      className="size-4"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={r.name}
+                        onChange={(e) => update(r.id, { name: e.target.value })}
+                        aria-invalid={nameInvalid}
+                        className="h-9"
+                      />
+                      {r.onRoster && (
+                        <span className="shrink-0 text-xs text-muted-foreground">on roster</span>
+                      )}
+                    </div>
                     <Input
-                      value={r.name}
-                      onChange={(e) => update(r.id, { name: e.target.value })}
+                      value={r.number}
+                      onChange={(e) => update(r.id, { number: e.target.value })}
+                      type="number"
                       className="h-9"
                     />
-                    {r.onRoster && (
-                      <span className="shrink-0 text-xs text-muted-foreground">on roster</span>
-                    )}
+                    <Input
+                      value={r.position}
+                      onChange={(e) => update(r.id, { position: e.target.value })}
+                      maxLength={8}
+                      aria-invalid={posInvalid}
+                      className="h-9"
+                    />
+                    <select
+                      value={r.class}
+                      onChange={(e) => update(r.id, { class: e.target.value as PlayerClass | "" })}
+                      aria-invalid={classInvalid}
+                      className={cn(selectClass, classInvalid && invalidRing)}
+                    >
+                      <option value="">Pick class…</option>
+                      {classOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove ${r.name}`}
+                      onClick={() => removeRow(r.id)}
+                    >
+                      ✕
+                    </Button>
                   </div>
-                  <Input
-                    value={r.number}
-                    onChange={(e) => update(r.id, { number: e.target.value })}
-                    type="number"
-                    className="h-9"
-                  />
-                  <Input
-                    value={r.position}
-                    onChange={(e) => update(r.id, { position: e.target.value })}
-                    maxLength={8}
-                    className="h-9"
-                  />
-                  <select
-                    value={r.class}
-                    onChange={(e) => update(r.id, { class: e.target.value as PlayerClass | "" })}
-                    className={selectClass}
-                  >
-                    <option value="">Pick class…</option>
-                    {classOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Remove ${r.name}`}
-                    onClick={() => removeRow(r.id)}
-                  >
-                    ✕
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {shots > 0 && rows.length === 0 && (

@@ -27,12 +27,13 @@ function parseJsonLoose(text: string): unknown {
  */
 export async function extractWithOpenRouter(
   kind: OcrKind,
-  imageDataUrl: string,
+  imageDataUrls: string[],
 ): Promise<unknown> {
   const apiKey = process.env.OPEN_ROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("OPEN_ROUTER_API_KEY is not set on the server.");
   }
+  if (imageDataUrls.length === 0) throw new Error("No images to read.");
   const model = process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
   const { system, instruction } = buildPrompt(kind);
 
@@ -55,7 +56,10 @@ export async function extractWithOpenRouter(
             role: "user",
             content: [
               { type: "text", text: instruction },
-              { type: "image_url", image_url: { url: imageDataUrl } },
+              ...imageDataUrls.map((url) => ({
+                type: "image_url" as const,
+                image_url: { url },
+              })),
             ],
           },
         ],

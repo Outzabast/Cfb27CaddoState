@@ -7,7 +7,8 @@ import { isOcrKind, type OcrResponse } from "@/lib/ocr/kinds";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 15 * 1024 * 1024; // 15MB
+const MAX_BYTES = 20 * 1024 * 1024; // 20MB total across all images
+const MAX_IMAGES = 8;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function json(body: OcrResponse, status = 200) {
@@ -27,19 +28,29 @@ export async function POST(req: Request) {
     return json({ ok: false, error: "Unknown import kind." }, 400);
   }
 
-  const file = form.get("image");
-  if (!(file instanceof File) || file.size === 0) {
-    return json({ ok: false, error: "Choose a screenshot to import." }, 400);
+  const files = form
+    .getAll("image")
+    .filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) {
+    return json({ ok: false, error: "Choose at least one screenshot to import." }, 400);
   }
-  if (file.size > MAX_BYTES) {
-    return json({ ok: false, error: "Image is too large (max 15MB)." }, 400);
+  if (files.length > MAX_IMAGES) {
+    return json({ ok: false, error: `Too many images (max ${MAX_IMAGES} per import).` }, 400);
   }
-  const type = ALLOWED_TYPES.has(file.type) ? file.type : "image/png";
+  const total = files.reduce((sum, f) => sum + f.size, 0);
+  if (total > MAX_BYTES) {
+    return json({ ok: false, error: "Images are too large (max 20MB total)." }, 400);
+  }
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const dataUrl = `data:${type};base64,${buffer.toString("base64")}`;
-    const raw = await extractWithOpenRouter(kind, dataUrl);
+    const dataUrls = await Promise.all(
+      files.map(async (file) => {
+        const type = ALLOWED_TYPES.has(file.type) ? file.type : "image/png";
+        const buffer = Buffer.from(await file.arrayBuffer());
+        return `data:${type};base64,${buffer.toString("base64")}`;
+      }),
+    );
+    const raw = await extractWithOpenRouter(kind, dataUrls);
     const result = normalizeResult(kind, raw);
     return json({ ok: true, result });
   } catch (e) {
