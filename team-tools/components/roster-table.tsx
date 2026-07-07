@@ -26,6 +26,7 @@ export type RosterRow = {
   position: string;
   class: PlayerClass;
   number: number | null;
+  isStarter: boolean;
 };
 
 type SortKey = "number" | "name" | "position" | "class";
@@ -196,6 +197,15 @@ export function RosterTable({
                       aria-label="Class"
                       className="w-52"
                     />
+                    <label className="flex items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        name="isStarter"
+                        defaultChecked={r.isStarter}
+                        aria-label="Starter"
+                      />
+                      Starter
+                    </label>
                     <Button type="submit" variant="secondary" size="sm">
                       Save
                     </Button>

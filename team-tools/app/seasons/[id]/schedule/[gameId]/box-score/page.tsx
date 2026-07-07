@@ -7,17 +7,22 @@ import {
   PLAYER_PCTS,
   TEAM_PCTS,
 } from "@/lib/stat-fields";
+import type { BoxLine } from "@/lib/box-score";
 import {
   upsertTeamStats,
   upsertPlayerStat,
   zeroOutRoster,
+  generateGameArticle,
 } from "./actions";
 import { StatFieldGroups } from "@/components/stat-field-groups";
 import { BoxScoreImportMenu } from "@/components/ocr/box-score-import";
+import { BoxScoreRead } from "@/components/box-score/box-score-read";
+import { PersonaSelect } from "@/components/media/persona-select";
+import { PlayerMultiSelect } from "@/components/media/player-multi-select";
 import { SaveForm } from "@/components/save-form";
 import { Scoreboard } from "@/components/scoreboard";
 import { PlayerStatTable, type StatLineRow } from "@/components/player-stat-table";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -34,7 +39,7 @@ export default async function BoxScorePage({
   searchParams,
 }: {
   params: Promise<{ id: string; gameId: string }>;
-  searchParams: Promise<{ player?: string }>;
+  searchParams: Promise<{ player?: string; mode?: string }>;
 }) {
   const { id, gameId } = await params;
   const seasonId = Number(id);
@@ -57,16 +62,46 @@ export default async function BoxScorePage({
     orderBy: { player: { name: "asc" } },
   });
   const positionByPlayer = new Map(roster.map((e) => [e.playerId, e.position]));
+  const numberByPlayer = new Map(roster.map((e) => [e.playerId, e.number]));
 
   const usedPlayerIds = new Set(game.playerStats.map((s) => s.playerId));
   const availableRoster = roster.filter((e) => !usedPlayerIds.has(e.playerId));
 
-  const { player } = await searchParams;
+  const personas = await db.authorPersona.findMany({
+    where: { active: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+  const rosterPlayers = roster.map((e) => ({
+    id: e.playerId,
+    name: e.player.name,
+    position: e.position,
+    status: e.player.status,
+  }));
+
+  const { player, mode } = await searchParams;
+  const isEdit = mode === "edit";
   const selectedPlayerId = player ? Number(player) : undefined;
   const editingLine = selectedPlayerId
     ? game.playerStats.find((s) => s.playerId === selectedPlayerId)
     : undefined;
 
+  const backHref = `/seasons/${seasonId}/schedule`;
+  const basePath = `${backHref}/${gid}/box-score`;
+
+  // Players ranked by this game's notoriety (system-computed on box-score save).
+  const notoRanked = [...game.playerStats]
+    .filter((s) => s.gameNotoriety > 0)
+    .sort((a, b) => b.gameNotoriety - a.gameNotoriety);
+
+  // ---- Read-mode data (ESPN-style tables) ----
+  const lines: BoxLine[] = game.playerStats.map((s) => ({
+    ...s,
+    name: s.player.name,
+    number: numberByPlayer.get(s.playerId) ?? null,
+  }));
+
+  // ---- Edit-mode data (compact editable table) ----
   const statRows: StatLineRow[] = game.playerStats.map((s) => ({
     playerId: s.playerId,
     name: s.player.name,
@@ -81,9 +116,6 @@ export default async function BoxScorePage({
     tackles: s.tacklesSolo + s.tacklesAst,
     sacks: s.sacks,
   }));
-
-  const backHref = `/seasons/${seasonId}/schedule`;
-  const basePath = `${backHref}/${gid}/box-score`;
 
   return (
     <div className="space-y-8">
@@ -100,174 +132,260 @@ export default async function BoxScorePage({
             {game.opponent}
             {game.week != null ? ` (Week ${game.week})` : ""}
           </h1>
-          <BoxScoreImportMenu
-            seasonId={seasonId}
-            gameId={gid}
-            roster={roster.map((e) => ({
-              playerId: e.playerId,
-              name: e.player.name,
-              position: e.position,
-            }))}
-          />
+          <div className="flex items-center gap-2">
+            {isEdit && (
+              <BoxScoreImportMenu
+                seasonId={seasonId}
+                gameId={gid}
+                roster={roster.map((e) => ({
+                  playerId: e.playerId,
+                  name: e.player.name,
+                  position: e.position,
+                }))}
+              />
+            )}
+            {isEdit ? (
+              <Link href={basePath} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                Done
+              </Link>
+            ) : (
+              <Link href={`${basePath}?mode=edit`} className={buttonVariants({ size: "sm" })}>
+                Edit box score
+              </Link>
+            )}
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          Caddo State {game.teamPoints} – {game.oppPoints} {game.opponent}. Blanks
-          count as 0; totals roll up to the season & career automatically.
+          Caddo State {game.teamPoints} – {game.oppPoints} {game.opponent}
+          {isEdit ? ". Blanks count as 0; totals roll up to the season & career automatically." : ""}
         </p>
       </div>
 
-      {/* ---- Scoreboard (score by quarter) ---- */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Score by quarter</CardTitle>
-          <CardDescription>
-            Final is calculated from the quarters. Add OT only if the game went to
-            overtime.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Scoreboard
-            seasonId={seasonId}
-            gameId={gid}
-            teamName="Caddo State"
-            oppName={game.opponent}
-            values={{
-              teamQ1: game.teamQ1, teamQ2: game.teamQ2, teamQ3: game.teamQ3,
-              teamQ4: game.teamQ4, teamOt: game.teamOt,
-              oppQ1: game.oppQ1, oppQ2: game.oppQ2, oppQ3: game.oppQ3,
-              oppQ4: game.oppQ4, oppOt: game.oppOt,
-            }}
-          />
-        </CardContent>
-      </Card>
+      {notoRanked.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="eyebrow !text-foreground">Game Notoriety</h2>
+          <div className="flex flex-wrap gap-2">
+            {notoRanked.map((s) => (
+              <Link
+                key={s.playerId}
+                href={`/players/${s.playerId}`}
+                className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-1 text-sm hover:bg-accent"
+              >
+                <span className="font-medium">{s.player.name}</span>
+                <span className="tabular-nums font-bold text-primary">{s.gameNotoriety}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
-      {/* ---- Team stats ---- */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Team stats</CardTitle>
-          <CardDescription>Caddo State team totals for this game.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SaveForm
-            action={upsertTeamStats}
-            successText="Team stats saved"
-            className="space-y-4"
-          >
-            <input type="hidden" name="seasonId" value={seasonId} />
-            <input type="hidden" name="gameId" value={gid} />
-            <StatFieldGroups
-              groups={TEAM_STAT_GROUPS}
-              values={game.teamStats ?? undefined}
-              idPrefix="team"
-              pcts={TEAM_PCTS}
-            />
-            <Button type="submit">Save team stats</Button>
-          </SaveForm>
-        </CardContent>
-      </Card>
-
-      {/* ---- Existing player lines ---- */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Player stat lines</h2>
-          {availableRoster.length > 0 && game.playerStats.length > 0 && (
-            <SaveForm action={zeroOutRoster} successText="Rest of roster zeroed out">
-              <input type="hidden" name="seasonId" value={seasonId} />
-              <input type="hidden" name="gameId" value={gid} />
-              <Button type="submit" variant="outline" size="sm">
-                Zero out rest of roster ({availableRoster.length})
-              </Button>
-            </SaveForm>
-          )}
-        </div>
-        {statRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No player lines yet. Add one below, or zero out the whole roster.
-          </p>
-        ) : (
-          <PlayerStatTable
-            seasonId={seasonId}
-            gameId={gid}
-            basePath={basePath}
-            rows={statRows}
-          />
-        )}
-      </div>
-
-      {/* ---- Add / edit a player line ---- */}
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {editingLine ? `Edit ${editingLine.player.name}` : "Add player line"}
-          </CardTitle>
-          <CardDescription>
-            {editingLine
-              ? "Update this player's stats for the game."
-              : "Pick a rostered player (only those without a line yet) and enter their stats."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {!editingLine && availableRoster.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Every rostered player already has a stat line for this game.
-            </p>
-          ) : (
-            <SaveForm
-              action={upsertPlayerStat}
-              successText={editingLine ? "Stat line saved" : "Stat line added"}
-              className="space-y-4"
-            >
-              <input type="hidden" name="seasonId" value={seasonId} />
-              <input type="hidden" name="gameId" value={gid} />
-              <div className="flex items-center gap-3">
-                <label htmlFor="playerId" className="text-sm font-medium">
-                  Player
-                </label>
-                {editingLine ? (
-                  <>
-                    <input type="hidden" name="playerId" value={editingLine.playerId} />
-                    <span className="font-medium">
-                      {editingLine.player.name}{" "}
-                      <span className="text-muted-foreground">
-                        {positionByPlayer.get(editingLine.playerId) ?? ""}
-                      </span>
-                    </span>
-                    <Link
-                      href={basePath}
-                      className="text-sm text-muted-foreground hover:text-foreground"
-                    >
-                      Cancel edit
-                    </Link>
-                  </>
-                ) : (
-                  <select
-                    id="playerId"
-                    name="playerId"
-                    defaultValue={availableRoster[0]?.playerId ?? ""}
-                    className={selectClass}
-                    required
-                  >
-                    {availableRoster.map((e) => (
-                      <option key={e.playerId} value={e.playerId}>
-                        {e.player.name} ({e.position})
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <StatFieldGroups
-                groups={PLAYER_STAT_GROUPS}
-                values={editingLine ?? undefined}
-                idPrefix="player"
-                pcts={PLAYER_PCTS}
+      {!isEdit ? (
+        <BoxScoreRead game={game} lines={lines} teamStats={game.teamStats} />
+      ) : (
+        <>
+          {/* ---- Scoreboard (score by quarter) ---- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Score by quarter</CardTitle>
+              <CardDescription>
+                Final is calculated from the quarters. Add OT only if the game went to
+                overtime.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Scoreboard
+                seasonId={seasonId}
+                gameId={gid}
+                teamName="Caddo State"
+                oppName={game.opponent}
+                values={{
+                  teamQ1: game.teamQ1, teamQ2: game.teamQ2, teamQ3: game.teamQ3,
+                  teamQ4: game.teamQ4, teamOt: game.teamOt,
+                  oppQ1: game.oppQ1, oppQ2: game.oppQ2, oppQ3: game.oppQ3,
+                  oppQ4: game.oppQ4, oppOt: game.oppOt,
+                }}
               />
-              <Button type="submit">
-                {editingLine ? "Save changes" : "Add stat line"}
-              </Button>
-            </SaveForm>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+
+          {/* ---- Team stats ---- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Team stats</CardTitle>
+              <CardDescription>Caddo State team totals for this game.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SaveForm
+                action={upsertTeamStats}
+                successText="Team stats saved"
+                className="space-y-4"
+              >
+                <input type="hidden" name="seasonId" value={seasonId} />
+                <input type="hidden" name="gameId" value={gid} />
+                <StatFieldGroups
+                  groups={TEAM_STAT_GROUPS}
+                  values={game.teamStats ?? undefined}
+                  idPrefix="team"
+                  pcts={TEAM_PCTS}
+                />
+                <Button type="submit">Save team stats</Button>
+              </SaveForm>
+            </CardContent>
+          </Card>
+
+          {/* ---- Existing player lines ---- */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Player stat lines</h2>
+              {availableRoster.length > 0 && game.playerStats.length > 0 && (
+                <SaveForm action={zeroOutRoster} successText="Rest of roster zeroed out">
+                  <input type="hidden" name="seasonId" value={seasonId} />
+                  <input type="hidden" name="gameId" value={gid} />
+                  <Button type="submit" variant="outline" size="sm">
+                    Zero out rest of roster ({availableRoster.length})
+                  </Button>
+                </SaveForm>
+              )}
+            </div>
+            {statRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No player lines yet. Add one below, or zero out the whole roster.
+              </p>
+            ) : (
+              <PlayerStatTable
+                seasonId={seasonId}
+                gameId={gid}
+                basePath={basePath}
+                rows={statRows}
+              />
+            )}
+          </div>
+
+          {/* ---- Add / edit a player line ---- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                {editingLine ? `Edit ${editingLine.player.name}` : "Add player line"}
+              </CardTitle>
+              <CardDescription>
+                {editingLine
+                  ? "Update this player's stats for the game."
+                  : "Pick a rostered player (only those without a line yet) and enter their stats."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!editingLine && availableRoster.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Every rostered player already has a stat line for this game.
+                </p>
+              ) : (
+                <SaveForm
+                  action={upsertPlayerStat}
+                  successText={editingLine ? "Stat line saved" : "Stat line added"}
+                  className="space-y-4"
+                >
+                  <input type="hidden" name="seasonId" value={seasonId} />
+                  <input type="hidden" name="gameId" value={gid} />
+                  <input type="hidden" name="mode" value="edit" />
+                  <div className="flex items-center gap-3">
+                    <label htmlFor="playerId" className="text-sm font-medium">
+                      Player
+                    </label>
+                    {editingLine ? (
+                      <>
+                        <input type="hidden" name="playerId" value={editingLine.playerId} />
+                        <span className="font-medium">
+                          {editingLine.player.name}{" "}
+                          <span className="text-muted-foreground">
+                            {positionByPlayer.get(editingLine.playerId) ?? ""}
+                          </span>
+                        </span>
+                        <Link
+                          href={`${basePath}?mode=edit`}
+                          className="text-sm text-muted-foreground hover:text-foreground"
+                        >
+                          Cancel edit
+                        </Link>
+                      </>
+                    ) : (
+                      <select
+                        id="playerId"
+                        name="playerId"
+                        defaultValue={availableRoster[0]?.playerId ?? ""}
+                        className={selectClass}
+                        required
+                      >
+                        {availableRoster.map((e) => (
+                          <option key={e.playerId} value={e.playerId}>
+                            {e.player.name} ({e.position})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <StatFieldGroups
+                    groups={PLAYER_STAT_GROUPS}
+                    values={editingLine ?? undefined}
+                    idPrefix="player"
+                    pcts={PLAYER_PCTS}
+                  />
+                  <Button type="submit">
+                    {editingLine ? "Save changes" : "Add stat line"}
+                  </Button>
+                </SaveForm>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ---- Generate a recap ---- */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Generate recap</CardTitle>
+              <CardDescription>
+                Done editing? Write a news recap of this game from the box score. It
+                generates in the background and lands in the Media tab.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SaveForm
+                action={generateGameArticle}
+                loadingText="Queuing recap…"
+                successText="Recap queued"
+                className="space-y-4"
+              >
+                <input type="hidden" name="seasonId" value={seasonId} />
+                <input type="hidden" name="gameId" value={gid} />
+                <div className="grid gap-1.5">
+                  <label
+                    htmlFor="mediaContext"
+                    className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  >
+                    Context the stats don&rsquo;t show (optional)
+                  </label>
+                  <textarea
+                    id="mediaContext"
+                    name="mediaContext"
+                    placeholder="e.g. Caught the winning TD on the final play · backup QB started with the starter injured"
+                    className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Written by
+                  </span>
+                  <PersonaSelect personas={personas} />
+                </div>
+                <PlayerMultiSelect
+                  players={rosterPlayers}
+                  name="mediaPlayerId"
+                  label="Also write player features for (default none)"
+                />
+                <Button type="submit">Generate recap</Button>
+              </SaveForm>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

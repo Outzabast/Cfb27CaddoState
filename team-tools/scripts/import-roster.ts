@@ -44,6 +44,7 @@ for (const r of toAdd) {
       seasonPlayers: {
         create: {
           seasonRosterId: roster.id,
+          playerName: r.name,
           position: r.position,
           class: r.class,
           number: r.number,

@@ -76,7 +76,11 @@ export default async function SeasonsPage() {
           <TableBody>
             {seasons.map((s) => (
               <TableRow key={s.id}>
-                <TableCell className="font-medium">{s.name}</TableCell>
+                <TableCell className="font-medium">
+                  <Link href={`/seasons/${s.id}`} className="hover:text-primary hover:underline">
+                    {s.name}
+                  </Link>
+                </TableCell>
                 <TableCell className="text-right">{s.roster?._count.players ?? 0}</TableCell>
                 <TableCell className="text-right">{s._count.games}</TableCell>
                 <TableCell className="text-right">

@@ -23,7 +23,9 @@ export function StatFieldGroups({
   pcts = [],
 }: {
   groups: StatGroup[];
-  values?: Record<string, number | null>;
+  /** Prefill values keyed by stat-field name. Accepts any record (e.g. a full
+   *  Prisma stat row) — only the declared stat fields are read. */
+  values?: Record<string, unknown>;
   idPrefix: string;
   pcts?: DerivedPct[];
 }) {
@@ -59,7 +61,8 @@ export function StatFieldGroups({
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
               {group.fields.map((f) => {
                 const id = `${idPrefix}-${f.name}`;
-                const v = values?.[f.name];
+                const raw = values?.[f.name];
+                const v = raw == null ? null : Number(raw);
                 const isDuration = f.format === "duration";
                 return (
                   <div key={f.name} className="grid gap-1">
@@ -75,7 +78,7 @@ export function StatFieldGroups({
                       defaultValue={
                         isDuration
                           ? v != null
-                            ? formatDuration(Number(v))
+                            ? formatDuration(v)
                             : ""
                           : (v ?? "")
                       }

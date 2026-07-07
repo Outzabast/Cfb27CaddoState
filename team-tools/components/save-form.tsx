@@ -32,8 +32,14 @@ export function SaveForm({
   loadingText = "Saving…",
   successText = "Saved",
   children,
+  // React manages encoding/method for function actions and warns if they're
+  // set explicitly — drop them so callers with file inputs don't trip it.
+  encType: _encType,
+  method: _method,
   ...rest
 }: SaveFormProps) {
+  void _encType;
+  void _method;
   return (
     <form
       {...rest}

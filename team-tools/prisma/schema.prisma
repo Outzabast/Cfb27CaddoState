@@ -36,6 +36,19 @@ enum GameLocation {
   @@map("game_location")
 }
 
+/// A player's standing with the program. POSTACTIVE means graduated or
+/// transferred (off the active roster) — a player whose latest class is
+/// GRADUATED/TRANSFERRED must be POSTACTIVE. INJURED = rostered but on IR
+/// (see Player.injuryDetails). ACTIVE/INJURED are both "on the roster" for
+/// notoriety purposes; POSTACTIVE drops the season baseline to 0.
+enum PlayerStatus {
+  ACTIVE
+  INJURED
+  POSTACTIVE
+
+  @@map("player_status")
+}
+
 /// A player's stable identity ONLY (name). The `id` lets rosters and game stats
 /// refer to the same person across seasons. Anything that changes year to year
 /// (class, position, number) lives on SeasonPlayer, not here, so a past season's
@@ -48,11 +61,29 @@ model Player {
   awards        String?
   notableEvents String? @map("notable_events")
   photo         Bytes?
+  // Structured bio for the ESPN-style profile header. A current snapshot on the
+  // player (height/weight can drift year to year; kept simple as one value).
+  heightInches  Int?         @map("height_inches")
+  weightLbs     Int?         @map("weight_lbs")
+  hometown      String?
+  // Standing with the program (ACTIVE / INJURED / POSTACTIVE). Kept in sync with
+  // class: a GRADUATED/TRANSFERRED player is POSTACTIVE. injuryDetails is the
+  // optional free-text note shown when INJURED.
+  status        PlayerStatus @default(ACTIVE)
+  injuryDetails String?      @map("injury_details")
+  // Program-wide notoriety: how noteworthy this player is across all seasons.
+  // Unsigned (guarded >= 0 in code); ratchets up fast, decays slowly. Says
+  // "worth writing about", not good/bad. See also SeasonPlayer.seasonNotoriety
+  // and GamePlayerStat.gameNotoriety for the narrower scopes.
+  overallNotoriety Int       @default(0) @map("overall_notoriety")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   seasonPlayers SeasonPlayer[]
   gameStats     GamePlayerStat[]
+  media         Media[]
+  mediaTags     MediaTag[]
+  mediaEvents   MediaEvent[]
 
   @@map("players")
 }
@@ -68,6 +99,9 @@ model Season {
 
   roster SeasonRoster?
   games  Game[]
+  media       Media[]
+  mediaTags   MediaTag[]
+  mediaEvents MediaEvent[]
 
   @@map("seasons")
 }
@@ -98,6 +132,12 @@ model SeasonPlayer {
   position       String      @db.VarChar(8)
   class          PlayerClass
   number         Int?
+  /// Whether this player starts for the team this season. Sets the notoriety
+  /// baseline (starters begin higher) and feeds the significance calc.
+  isStarter      Boolean     @default(false) @map("is_starter")
+  /// Notoriety within THIS season only (unsigned, guarded >= 0 in code).
+  /// Ratchets up fast, decays slowly. See Player.overallNotoriety for program-wide.
+  seasonNotoriety Int        @default(0) @map("season_notoriety")
 
   seasonRoster SeasonRoster @relation(fields: [seasonRosterId], references: [id], onDelete: Cascade)
   player       Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
@@ -137,6 +177,9 @@ model Game {
   season      Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
   playerStats GamePlayerStat[]
   teamStats   GameTeamStat?
+  media       Media[]
+  mediaTags   MediaTag[]
+  mediaEvents MediaEvent[]
 
   @@unique([seasonId, week])
   @@map("games")
@@ -204,8 +247,14 @@ model GamePlayerStat {
   fumbles     Int @default(0)
   fumblesLost Int @default(0) @map("fumbles_lost")
 
+  /// How noteworthy this player's line was IN THIS GAME (unsigned, guarded >= 0).
+  /// A per-game snapshot (not ratcheted) — drives who a recap features, so a
+  /// second-stringer who explodes for a game surfaces even with low season/overall.
+  gameNotoriety Int @default(0) @map("game_notoriety")
+
   game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  mediaTags MediaTag[]
 
   @@unique([gameId, playerId])
   @@map("game_player_stats")
@@ -255,4 +304,207 @@ model GameTeamStat {
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   @@map("game_team_stats")
+}
+
+/// What kind of media a piece is. Only ARTICLE ships today; the enum is the seam
+/// for future clip/highlight types so the Media table doesn't need reshaping.
+enum MediaType {
+  ARTICLE
+
+  @@map("media_type")
+}
+
+/// Which subject a piece of media is anchored to. This is the discriminator that
+/// stands in for the "PlayerMedia / GameMedia / TeamMedia" subclasses: Prisma has
+/// no table inheritance, so one Media table + this scope + the matching optional
+/// FK (playerId / gameId / seasonId) models the same thing in one queryable place.
+enum MediaScope {
+  PLAYER
+  GAME
+  TEAM
+
+  @@map("media_scope")
+}
+
+/// Lifecycle of a generated piece. Media is created PENDING the moment you check
+/// "generate media", flips to GENERATING while the LLM writes, then READY (the
+/// inbox shows it, unviewed) or FAILED (with genError). Generation is async, so
+/// the save that triggers it never blocks on the model.
+enum MediaGenStatus {
+  PENDING
+  GENERATING
+  READY
+  FAILED
+
+  @@map("media_gen_status")
+}
+
+/// One piece of generated media (today: a news article). The single-table stand-in
+/// for the Media parent + PlayerMedia/GameMedia/TeamMedia children: `scope` says
+/// which it is, and exactly one of playerId/gameId/seasonId is the required anchor.
+/// Extra cross-references (tag a player in a game recap, etc.) live in MediaTag.
+model Media {
+  id        Int            @id @default(autoincrement())
+  mediaType MediaType      @default(ARTICLE) @map("media_type")
+  scope     MediaScope
+  status    MediaGenStatus @default(PENDING)
+
+  // Content. Null until generation completes; photo is a user-added header image
+  // (like Player.photo) — the model doesn't produce images yet.
+  headline String?
+  body     String?
+  photo    Bytes?
+
+  // Inbox state: false until you open it, drives the "unviewed" badge on /media.
+  viewed Boolean @default(false)
+
+  // Generation metadata. promptContext is the "stuff the stats don't show" you
+  // type when triggering (NIL deal, walk-off catch, ...). modelId/costUsd record
+  // which OpenRouter model wrote it and the billed cost; genError holds the reason
+  // when status is FAILED.
+  promptContext   String? @map("prompt_context")
+  modelId         String? @map("model_id")
+  costUsd         Float?  @map("cost_usd")
+  genError        String? @map("gen_error")
+  authorPersonaId Int?    @map("author_persona_id")
+  // The event that produced this piece. Deleting the event deletes its media —
+  // the escape hatch for an erroneously-posted event.
+  mediaEventId    Int?    @map("media_event_id")
+
+  // Subject anchor. Exactly one is set, matching `scope`. Deleting the subject
+  // deletes its media.
+  playerId Int? @map("player_id")
+  gameId   Int? @map("game_id")
+  seasonId Int? @map("season_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  authorPersona AuthorPersona? @relation(fields: [authorPersonaId], references: [id], onDelete: SetNull)
+  player        Player?        @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  game          Game?          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  season        Season?        @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  mediaEvent    MediaEvent?    @relation(fields: [mediaEventId], references: [id], onDelete: Cascade)
+  tags          MediaTag[]
+
+  @@index([scope])
+  @@index([viewed])
+  @@index([playerId])
+  @@index([gameId])
+  @@index([seasonId])
+  @@index([mediaEventId])
+  @@map("media")
+}
+
+/// What happened to trigger media generation. Posting a box score is the main
+/// one; player updates and manual posts round it out.
+enum MediaEventType {
+  BOX_SCORE
+  PLAYER_UPDATE
+  MANUAL
+
+  @@map("media_event_type")
+}
+
+/// Where an event is in the mediaSpace pipeline. Created PENDING, the listener
+/// picks it up (PROCESSING), generates its media, then PROCESSED (or FAILED).
+enum MediaEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+
+  @@map("media_event_status")
+}
+
+/// A post to the "mediaSpace": the thing that triggers generation. The mediaSpace
+/// is just a listener over these — creating one schedules processing, which reads
+/// the subject (using player notoriety to decide who to feature) and produces one
+/// or more Media rows tied back here. Delete the event and its media cascade away,
+/// so an erroneous post is trivially undone.
+model MediaEvent {
+  id        Int              @id @default(autoincrement())
+  type      MediaEventType
+  status    MediaEventStatus @default(PENDING)
+  scope     MediaScope
+  mediaType MediaType        @default(ARTICLE) @map("media_type")
+
+  // Subject anchor, matching `scope` (as on Media).
+  playerId Int? @map("player_id")
+  gameId   Int? @map("game_id")
+  seasonId Int? @map("season_id")
+
+  // The editor's added context. `personaIds` = which author personas to write as
+  // (one piece each; empty = a single piece in the default voice). `playerIds` =
+  // extra players to also generate individual features for (a GAME event fans out
+  // to a recap + one feature per listed player). All the media an event produces
+  // point back at it, so deleting the event removes them together.
+  context    String?
+  personaIds Int[]   @default([]) @map("persona_ids")
+  playerIds  Int[]   @default([]) @map("player_ids")
+  error      String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  player Player? @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  game   Game?   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  season Season? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  media  Media[]
+
+  @@index([status])
+  @@index([gameId])
+  @@map("media_events")
+}
+
+/// A cross-reference from a piece of media to some subject beyond its primary
+/// anchor: the "tags" a piece can carry (player, game, season, or a specific
+/// box-score line). Drives "related articles" and lets a game recap surface on a
+/// tagged player's page. Each row sets exactly one of the optional FKs.
+model MediaTag {
+  id               Int  @id @default(autoincrement())
+  mediaId          Int  @map("media_id")
+  playerId         Int? @map("player_id")
+  gameId           Int? @map("game_id")
+  seasonId         Int? @map("season_id")
+  gamePlayerStatId Int? @map("game_player_stat_id")
+
+  media          Media           @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  player         Player?         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  game           Game?           @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  season         Season?         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  gamePlayerStat GamePlayerStat? @relation(fields: [gamePlayerStatId], references: [id], onDelete: Cascade)
+
+  @@index([mediaId])
+  @@index([playerId])
+  @@index([gameId])
+  @@map("media_tags")
+}
+
+/// A byline personality: the voice the LLM writes in for a piece of media. `voice`
+/// is the system-prompt fragment describing tone/style (e.g. "a hard-nosed beat
+/// writer who leads with the defense"). Seeded with one default; managed on the
+/// settings page.
+model AuthorPersona {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  voice     String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  media Media[]
+
+  @@map("author_personas")
+}
+
+/// Which OpenRouter model generates each media type. One row per MediaType, set on
+/// the settings page. Live per-token pricing is fetched from OpenRouter's /models
+/// endpoint at display time, not stored here (it drifts).
+model ModelSetting {
+  id        Int       @id @default(autoincrement())
+  mediaType MediaType @unique @map("media_type")
+  modelId   String    @map("model_id")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("model_settings")
 }

@@ -1,10 +1,13 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
 import { attachPlayerToRoster } from "@/lib/player-roster";
+import { postMediaEvent, readIdList } from "@/lib/media/media-space";
+import { recomputeGame } from "@/lib/notoriety";
 import type { PlayerClass } from "@/generated/prisma/enums";
 import { SCOREBOARD_FIELDS, type OcrScoreboard } from "@/lib/ocr/kinds";
 import {
@@ -94,9 +97,11 @@ export async function upsertPlayerStat(formData: FormData) {
     update: data,
   });
 
+  after(() => recomputeGame(gameId));
   revalidatePath(path);
-  // Return to a clean "add" form (drops any ?player= edit selection).
-  redirect(path);
+  // Return to a clean "add" form (drops any ?player= edit selection) while
+  // staying in edit mode.
+  redirect(`${path}?mode=edit`);
 }
 
 /**
@@ -122,6 +127,7 @@ export async function zeroOutRoster(formData: FormData) {
     .map((r) => ({ gameId, playerId: r.playerId })); // all stats default to 0
 
   if (toAdd.length) await db.gamePlayerStat.createMany({ data: toAdd });
+  after(() => recomputeGame(gameId));
   revalidatePath(path);
 }
 
@@ -240,7 +246,33 @@ export async function commitOcrPlayerStats(
     }
   });
 
+  after(() => recomputeGame(gameId));
   revalidatePath(`/seasons/${seasonId}/schedule/${gameId}/box-score`);
+}
+
+/**
+ * Post a box-score event to the mediaSpace: it recomputes notoriety and writes a
+ * notoriety-weighted recap in the background. Redirects to the Media Space feed so
+ * the user watches the event process.
+ */
+export async function generateGameArticle(formData: FormData) {
+  const { seasonId, gameId } = baseIds(formData);
+  const context = String(formData.get("mediaContext") ?? "").trim();
+  const personaIds = readIdList(formData, "mediaPersonaId");
+  const playerIds = readIdList(formData, "mediaPlayerId"); // extra player features (default none)
+
+  await postMediaEvent({
+    type: "BOX_SCORE",
+    scope: "GAME",
+    gameId,
+    context: context || null,
+    personaIds,
+    playerIds,
+  });
+
+  revalidatePath("/media");
+  revalidatePath(`/seasons/${seasonId}/media`);
+  redirect("/media/space");
 }
 
 export async function deletePlayerStat(formData: FormData) {
@@ -252,5 +284,6 @@ export async function deletePlayerStat(formData: FormData) {
     where: { gameId_playerId: { gameId, playerId } },
   });
 
+  after(() => recomputeGame(gameId));
   revalidatePath(path);
 }

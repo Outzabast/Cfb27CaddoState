@@ -26,7 +26,7 @@ try {
     });
     const pl = await tx.player.create({ data: { name: "Stat Test" } });
     await tx.seasonPlayer.create({
-      data: { seasonRosterId: s.roster!.id, playerId: pl.id, position: "QB", class: "SENIOR", number: 1 },
+      data: { seasonRosterId: s.roster!.id, playerId: pl.id, playerName: pl.name, position: "QB", class: "SENIOR", number: 1 },
     });
     const g = await tx.game.create({
       data: { seasonId: s.id, opponent: "X", location: "HOME", teamPoints: 1, oppPoints: 0 },

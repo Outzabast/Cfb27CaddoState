@@ -164,7 +164,7 @@ export function PlayerStatTable({
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Link
-                      href={`${basePath}?player=${s.playerId}`}
+                      href={`${basePath}?mode=edit&player=${s.playerId}`}
                       className={buttonVariants({ variant: "outline", size: "sm" })}
                     >
                       Edit

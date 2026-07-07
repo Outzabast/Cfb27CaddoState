@@ -1,21 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  PLAYER_STAT_GROUPS,
-  PLAYER_PCTS,
-  formatDuration,
-  formatPct,
-} from "@/lib/stat-fields";
-import { cn } from "@/lib/utils";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  StatCategoryTables,
+  toBoxLine,
+} from "@/components/box-score/stat-category-tables";
 
 export type SeasonStat = {
   seasonId: number;
@@ -27,32 +16,8 @@ export type SeasonStat = {
   values: Record<string, number>;
 };
 
-type Col = {
-  key: string;
-  label: string;
-  render: (v: Record<string, number>) => string | number;
-  sortVal: (v: Record<string, number>) => number;
-};
-
-const CATEGORIES = PLAYER_STAT_GROUPS.map((g) => g.title);
-
-function columnsFor(title: string): Col[] {
-  const group = PLAYER_STAT_GROUPS.find((g) => g.title === title)!;
-  const fieldCols: Col[] = group.fields.map((f) => ({
-    key: f.name,
-    label: f.label,
-    render: (v) =>
-      f.format === "duration" ? formatDuration(v[f.name] ?? 0) : (v[f.name] ?? 0),
-    sortVal: (v) => v[f.name] ?? 0,
-  }));
-  const pctCols: Col[] = PLAYER_PCTS.filter((p) => p.group === title).map((p) => ({
-    key: p.label,
-    label: p.label,
-    render: (v) => formatPct(v[p.num] ?? 0, v[p.den] ?? 0),
-    sortVal: (v) => (v[p.den] ? v[p.num] / v[p.den] : -1),
-  }));
-  return [...fieldCols, ...pctCols];
-}
+const selectClass =
+  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
 export function PlayerStats({
   career,
@@ -61,130 +26,53 @@ export function PlayerStats({
   career: Record<string, number>;
   seasons: SeasonStat[];
 }) {
-  const [category, setCategory] = useState(CATEGORIES[0]);
-  const [sortKey, setSortKey] = useState<string>("season");
-  const [sortAsc, setSortAsc] = useState(true);
-
-  const cols = useMemo(() => columnsFor(category), [category]);
-
-  const sortedSeasons = useMemo(() => {
-    const dir = sortAsc ? 1 : -1;
-    const col = cols.find((c) => c.key === sortKey);
-    return [...seasons].sort((a, b) => {
-      if (sortKey === "season" || !col) return (a.startYear - b.startYear) * dir;
-      return (col.sortVal(a.values) - col.sortVal(b.values)) * dir;
-    });
-  }, [seasons, cols, sortKey, sortAsc]);
-
-  function toggleSort(key: string) {
-    if (key === sortKey) setSortAsc((v) => !v);
-    else {
-      setSortKey(key);
-      setSortAsc(key === "season");
-    }
-  }
-  const arrow = (key: string) => (sortKey === key ? (sortAsc ? " ▲" : " ▼") : "");
+  // Default the season picker to the player's most recent season.
+  const latestId = seasons.at(-1)?.seasonId ?? null;
+  const [seasonId, setSeasonId] = useState<number | null>(latestId);
+  const selected =
+    seasons.find((s) => s.seasonId === seasonId) ?? seasons.at(-1) ?? null;
+  const seasonOptions = [...seasons].reverse(); // latest first in the dropdown
 
   return (
-    <div className="space-y-4">
-      {/* Category filter */}
-      <div className="flex flex-wrap gap-1 border-b">
-        {CATEGORIES.map((c) => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => setCategory(c)}
-            className={cn(
-              "-mb-px border-b-2 px-3 pb-2 text-sm text-muted-foreground hover:text-foreground",
-              category === c && "border-foreground font-medium text-foreground",
-            )}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
-
-      {/* Career */}
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Career</h2>
-        <div className="overflow-x-auto rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {cols.map((c) => (
-                  <TableHead key={c.key} className="text-right whitespace-nowrap">
-                    {c.label}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow>
-                {cols.map((c) => (
-                  <TableCell key={c.key} className="text-right tabular-nums">
-                    {c.render(career)}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
+    <div className="space-y-8">
+      <section className="space-y-3">
+        <h2 className="eyebrow !text-foreground">Career Stats</h2>
+        <StatCategoryTables line={toBoxLine(career)} />
       </section>
 
-      {/* Season by season */}
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">By season</h2>
-        {seasons.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No seasons on record.</p>
+      <div className="border-t border-border" />
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="eyebrow !text-foreground">Season Stats</h2>
+          {seasons.length > 0 && (
+            <select
+              value={seasonId ?? ""}
+              onChange={(e) => setSeasonId(Number(e.target.value))}
+              className={selectClass}
+              aria-label="Select season"
+            >
+              {seasonOptions.map((s) => (
+                <option key={s.seasonId} value={s.seasonId}>
+                  {s.seasonName}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        {selected ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {selected.position} · {selected.className}
+              {selected.number != null ? ` · #${selected.number}` : ""}
+            </p>
+            <StatCategoryTables
+              line={toBoxLine(selected.values)}
+              emptyText="No stats recorded this season."
+            />
+          </>
         ) : (
-          <div className="overflow-x-auto rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="whitespace-nowrap">
-                    <button
-                      type="button"
-                      onClick={() => toggleSort("season")}
-                      className="font-medium hover:text-foreground"
-                    >
-                      Season{arrow("season")}
-                    </button>
-                  </TableHead>
-                  <TableHead className="whitespace-nowrap">Pos/Cl</TableHead>
-                  {cols.map((c) => (
-                    <TableHead key={c.key} className="text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(c.key)}
-                        className="font-medium hover:text-foreground"
-                      >
-                        {c.label}
-                        {arrow(c.key)}
-                      </button>
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedSeasons.map((s) => (
-                  <TableRow key={s.seasonId}>
-                    <TableCell className="font-medium whitespace-nowrap">
-                      {s.seasonName}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {s.position} · {s.className}
-                      {s.number != null ? ` · #${s.number}` : ""}
-                    </TableCell>
-                    {cols.map((c) => (
-                      <TableCell key={c.key} className="text-right tabular-nums">
-                        {c.render(s.values)}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <p className="text-sm text-muted-foreground">No seasons on record.</p>
         )}
       </section>
     </div>

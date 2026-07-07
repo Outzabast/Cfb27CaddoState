@@ -1,9 +1,12 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { SeasonNav } from "@/components/season-nav";
 import { RosterTable, type RosterRow } from "@/components/roster-table";
+import { RosterReadTable, type RosterReadRow } from "@/components/roster-read-table";
 import { MultiPlayerForm } from "@/components/multi-player-form";
 import { RosterImportMenu } from "@/components/ocr/roster-import";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -14,8 +17,10 @@ import {
 
 export default async function RosterPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ mode?: string }>;
 }) {
   const seasonId = Number((await params).id);
   if (!Number.isInteger(seasonId)) notFound();
@@ -26,16 +31,32 @@ export default async function RosterPage({
   });
   if (!season) notFound();
 
-  const rows: RosterRow[] = (season.roster?.players ?? []).map((sp) => ({
+  const isEdit = (await searchParams).mode === "edit";
+  const players = season.roster?.players ?? [];
+  const basePath = `/seasons/${seasonId}/roster`;
+
+  const editRows: RosterRow[] = players.map((sp) => ({
     seasonPlayerId: sp.id,
     playerId: sp.playerId,
     name: sp.player.name,
     position: sp.position,
     class: sp.class,
     number: sp.number,
+    isStarter: sp.isStarter,
   }));
 
-  const existingNames = rows.map((r) => r.name);
+  const readRows: RosterReadRow[] = players.map((sp) => ({
+    playerId: sp.playerId,
+    name: sp.player.name,
+    position: sp.position,
+    class: sp.class,
+    number: sp.number,
+    heightInches: sp.player.heightInches,
+    weightLbs: sp.player.weightLbs,
+    hometown: sp.player.hometown,
+  }));
+
+  const existingNames = editRows.map((r) => r.name);
 
   return (
     <div className="space-y-8">
@@ -44,29 +65,53 @@ export default async function RosterPage({
           <h1 className="text-2xl font-semibold tracking-tight">{season.name} Roster</h1>
           <SeasonNav seasonId={seasonId} active="roster" />
         </div>
-        <RosterImportMenu seasonId={seasonId} existingNames={existingNames} />
+        <div className="flex items-center gap-2">
+          {isEdit && (
+            <RosterImportMenu seasonId={seasonId} existingNames={existingNames} />
+          )}
+          {isEdit ? (
+            <Link href={basePath} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Done
+            </Link>
+          ) : (
+            <Link href={`${basePath}?mode=edit`} className={buttonVariants({ size: "sm" })}>
+              Edit roster
+            </Link>
+          )}
+        </div>
       </div>
 
-      {rows.length === 0 ? (
+      {players.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No players on this roster yet. Add some below.
+          No players on this roster yet.{" "}
+          {isEdit ? (
+            "Add some below."
+          ) : (
+            <Link href={`${basePath}?mode=edit`} className="font-medium text-primary hover:underline">
+              Add some
+            </Link>
+          )}
         </p>
+      ) : isEdit ? (
+        <RosterTable seasonId={seasonId} rows={editRows} />
       ) : (
-        <RosterTable seasonId={seasonId} rows={rows} />
+        <RosterReadTable rows={readRows} />
       )}
 
-      <Card className="max-w-3xl">
-        <CardHeader>
-          <CardTitle>Add players</CardTitle>
-          <CardDescription>
-            Add one or several at once — use “+ Add row” for more. Creates new
-            players on the {season.name} roster.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MultiPlayerForm seasonId={seasonId} />
-        </CardContent>
-      </Card>
+      {isEdit && (
+        <Card className="max-w-3xl">
+          <CardHeader>
+            <CardTitle>Add players</CardTitle>
+            <CardDescription>
+              Add one or several at once — use “+ Add row” for more. Creates new
+              players on the {season.name} roster.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <MultiPlayerForm seasonId={seasonId} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

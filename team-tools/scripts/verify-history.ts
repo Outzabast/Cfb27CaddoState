@@ -3,14 +3,15 @@
 import "dotenv/config";
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import type { PlayerClass } from "../generated/prisma/enums";
 
-const ADVANCE: Record<string, string> = {
+const ADVANCE: Record<string, PlayerClass> = {
   FRESHMAN: "SOPHOMORE",
   REDSHIRT_FRESHMAN: "REDSHIRT_SOPHOMORE",
   SOPHOMORE: "JUNIOR",
   SENIOR: "GRADUATED",
 };
-const INACTIVE = new Set(["GRADUATED", "TRANSFERRED"]);
+const INACTIVE = new Set<PlayerClass>(["GRADUATED", "TRANSFERRED"]);
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
@@ -27,7 +28,7 @@ try {
     });
     const player = await tx.player.create({ data: { name: "Frosh Test" } });
     await tx.seasonPlayer.create({
-      data: { seasonRosterId: s1.roster!.id, playerId: player.id, position: "QB", class: "FRESHMAN", number: 12 },
+      data: { seasonRosterId: s1.roster!.id, playerId: player.id, playerName: player.name, position: "QB", class: "FRESHMAN", number: 12 },
     });
 
     // --- advance ---
@@ -43,7 +44,7 @@ try {
       const to = ADVANCE[sp.class];
       if (!INACTIVE.has(to)) {
         await tx.seasonPlayer.create({
-          data: { seasonRosterId: s2.roster!.id, playerId: sp.playerId, position: sp.position, class: to, number: sp.number },
+          data: { seasonRosterId: s2.roster!.id, playerId: sp.playerId, playerName: sp.playerName, position: sp.position, class: to, number: sp.number },
         });
       }
     }

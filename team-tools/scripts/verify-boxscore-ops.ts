@@ -19,7 +19,7 @@ try {
     const mk = (name: string) =>
       tx.player.create({ data: { name } }).then((p) =>
         tx.seasonPlayer
-          .create({ data: { seasonRosterId: s.roster!.id, playerId: p.id, position: "QB", class: "SENIOR" } })
+          .create({ data: { seasonRosterId: s.roster!.id, playerId: p.id, playerName: name, position: "QB", class: "SENIOR" } })
           .then(() => p.id),
       );
     const [p1, p2, p3] = [await mk("A"), await mk("B"), await mk("C")];

@@ -1,10 +1,12 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
 import { parseRosterRows } from "@/lib/roster-import";
 import { attachPlayerToRoster } from "@/lib/player-roster";
+import { recomputeAll } from "@/lib/notoriety";
 import type { PlayerClass } from "@/generated/prisma/enums";
 
 const MAX_POSITION_LEN = 8;
@@ -215,9 +217,12 @@ export async function updateSeasonPlayer(formData: FormData) {
       position: parsePosition(formData),
       class: parseClass(formData),
       number: parseNumber(formData),
+      isStarter: formData.get("isStarter") != null,
     },
   });
 
+  // Starter/class shifts baselines and records — recompute every player.
+  after(() => recomputeAll());
   revalidatePath(`/seasons/${seasonId}/roster`);
 }
 
