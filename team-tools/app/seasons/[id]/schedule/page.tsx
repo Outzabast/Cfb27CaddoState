@@ -1,13 +1,14 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { LOCATION_LABELS, LOCATION_ORDER } from "@/lib/classes";
-import { createGame, updateGame, deleteGame } from "./actions";
+import { createGame } from "./actions";
+import { SaveForm } from "@/components/save-form";
 import { SeasonNav } from "@/components/season-nav";
-import { ConfirmButton } from "@/components/confirm-button";
+import { ScheduleTable, type GameRow } from "@/components/schedule-table";
+import { ScheduleImportMenu } from "@/components/ocr/schedule-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -21,19 +22,12 @@ const locationOptions = LOCATION_ORDER.map((l) => ({
   label: LOCATION_LABELS[l],
 }));
 
-function toDateInput(date: Date | null): string {
-  return date ? date.toISOString().slice(0, 10) : "";
-}
-
-function result(teamPoints: number, oppPoints: number): string | null {
-  if (teamPoints === 0 && oppPoints === 0) return null;
-  if (teamPoints > oppPoints) return "W";
-  if (teamPoints < oppPoints) return "L";
-  return "T";
-}
-
 const selectClass =
   "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
+function toDateInput(date: Date | null): string | null {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
 
 export default async function SchedulePage({
   params,
@@ -45,93 +39,42 @@ export default async function SchedulePage({
 
   const season = await db.season.findUnique({
     where: { id: seasonId },
-    include: {
-      games: { orderBy: [{ week: "asc" }, { date: "asc" }, { id: "asc" }] },
-    },
+    include: { games: true },
   });
   if (!season) notFound();
 
+  const games: GameRow[] = season.games.map((g) => ({
+    id: g.id,
+    week: g.week,
+    date: toDateInput(g.date),
+    opponent: g.opponent,
+    location: g.location,
+    teamPoints: g.teamPoints,
+    oppPoints: g.oppPoints,
+  }));
+
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {season.name} Schedule
-        </h1>
-        <SeasonNav seasonId={seasonId} active="schedule" />
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {season.name} Schedule
+          </h1>
+          <SeasonNav seasonId={seasonId} active="schedule" />
+        </div>
+        <ScheduleImportMenu
+          seasonId={seasonId}
+          existingWeeks={games.map((g) => g.week).filter((w): w is number => w != null)}
+          existingOpponents={games.map((g) => g.opponent)}
+        />
       </div>
 
-      {season.games.length === 0 ? (
+      {games.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No games scheduled yet. Add one below.
         </p>
       ) : (
-        <div className="space-y-2">
-          {season.games.map((game) => {
-            const r = result(game.teamPoints, game.oppPoints);
-            return (
-              <div
-                key={game.id}
-                className="flex flex-wrap items-end gap-2 rounded-md border p-2"
-              >
-                <form
-                  action={updateGame}
-                  className="flex flex-wrap items-end gap-2"
-                >
-                  <input type="hidden" name="seasonId" value={seasonId} />
-                  <input type="hidden" name="gameId" value={game.id} />
-                  <Field label="Wk" className="w-14">
-                    <Input name="week" type="number" defaultValue={game.week ?? ""} />
-                  </Field>
-                  <Field label="Date" className="w-40">
-                    <Input name="date" type="date" defaultValue={toDateInput(game.date)} />
-                  </Field>
-                  <Field label="Opponent" className="w-48">
-                    <Input name="opponent" defaultValue={game.opponent} required />
-                  </Field>
-                  <Field label="Where" className="w-28">
-                    <select name="location" defaultValue={game.location} className={selectClass}>
-                      {locationOptions.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="CS" className="w-16">
-                    <Input name="teamPoints" type="number" defaultValue={game.teamPoints} />
-                  </Field>
-                  <Field label="Opp" className="w-16">
-                    <Input name="oppPoints" type="number" defaultValue={game.oppPoints} />
-                  </Field>
-                  {r && (
-                    <Badge
-                      variant={r === "W" ? "default" : "secondary"}
-                      className="mb-1"
-                    >
-                      {r}
-                    </Badge>
-                  )}
-                  <Button type="submit" variant="secondary" size="sm" className="mb-0.5">
-                    Save
-                  </Button>
-                </form>
-                <form action={deleteGame} className="ml-auto">
-                  <input type="hidden" name="seasonId" value={seasonId} />
-                  <input type="hidden" name="gameId" value={game.id} />
-                  <ConfirmButton
-                    type="submit"
-                    variant="ghost"
-                    size="sm"
-                    className="mb-0.5"
-                    message={`Delete the game vs ${game.opponent}?`}
-                  >
-                    Delete
-                  </ConfirmButton>
-                </form>
-              </div>
-            );
-          })}
-        </div>
+        <ScheduleTable seasonId={seasonId} games={games} />
       )}
 
       <Card className="max-w-3xl">
@@ -139,13 +82,18 @@ export default async function SchedulePage({
           <CardTitle>Add game</CardTitle>
           <CardDescription>
             Schedule an opponent now; fill in the score later to record the result.
+            Weeks 0–20 are valid.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form action={createGame} className="flex flex-wrap items-end gap-3">
+          <SaveForm
+            action={createGame}
+            successText="Game added"
+            className="flex flex-wrap items-end gap-3"
+          >
             <input type="hidden" name="seasonId" value={seasonId} />
-            <Field label="Week" className="w-16">
-              <Input name="week" type="number" placeholder="1" />
+            <Field label="Week" className="w-20">
+              <Input name="week" type="number" min={0} max={20} placeholder="1" />
             </Field>
             <Field label="Date" className="w-40">
               <Input name="date" type="date" />
@@ -163,7 +111,7 @@ export default async function SchedulePage({
               </select>
             </Field>
             <Button type="submit">Add game</Button>
-          </form>
+          </SaveForm>
         </CardContent>
       </Card>
     </div>

@@ -36,24 +36,29 @@ enum GameLocation {
   @@map("game_location")
 }
 
-/// A player's stable identity. The `id` lets every other table (rosters and
-/// game stats) refer to the same player across seasons. Position and class live
-/// here because they describe the player's current state and change over time.
+/// A player's stable identity ONLY (name). The `id` lets rosters and game stats
+/// refer to the same person across seasons. Anything that changes year to year
+/// (class, position, number) lives on SeasonPlayer, not here, so a past season's
+/// record is never rewritten when the player advances.
 model Player {
-  id        Int         @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   name      String
-  position  String      @db.VarChar(8)
-  class     PlayerClass
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @updatedAt @map("updated_at")
+  // Profile info (not used by the roster). All optional.
+  bio           String?
+  awards        String?
+  notableEvents String? @map("notable_events")
+  photo         Bytes?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  rosterEntries RosterEntry[]
+  seasonPlayers SeasonPlayer[]
   gameStats     GamePlayerStat[]
 
   @@map("players")
 }
 
-/// A single season, e.g. "2026-2027" spanning startYear -> endYear.
+/// A single season, e.g. "2026-2027" spanning startYear -> endYear. Each season
+/// has exactly one roster.
 model Season {
   id        Int      @id @default(autoincrement())
   name      String   @unique
@@ -61,26 +66,41 @@ model Season {
   endYear   Int      @map("end_year")
   createdAt DateTime @default(now()) @map("created_at")
 
-  rosterEntries RosterEntry[]
-  games         Game[]
+  roster SeasonRoster?
+  games  Game[]
 
   @@map("seasons")
 }
 
-/// The roster: which players are on the team for a given season. A player can
-/// appear on many seasons' rosters. `number` is the optional jersey number,
-/// kept here (per season) since numbers can change year to year.
-model RosterEntry {
-  id       Int  @id @default(autoincrement())
-  seasonId Int  @map("season_id")
-  playerId Int  @map("player_id")
-  number   Int?
+/// The team's roster for one season: the collection of players on the team and
+/// the state they were in that year (via its SeasonPlayer rows). One per season.
+model SeasonRoster {
+  id       Int @id @default(autoincrement())
+  seasonId Int @unique @map("season_id")
 
-  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  season  Season         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  players SeasonPlayer[]
 
-  @@unique([seasonId, playerId])
-  @@map("roster_entries")
+  @@map("season_rosters")
+}
+
+/// One player as they existed in a specific season: their class, position, and
+/// jersey number FOR THAT SEASON. Advancing to the next season creates new
+/// SeasonPlayer rows (with stepped-up classes) and leaves prior ones untouched,
+/// so history is preserved.
+model SeasonPlayer {
+  id             Int         @id @default(autoincrement())
+  seasonRosterId Int         @map("season_roster_id")
+  playerId       Int         @map("player_id")
+  position       String      @db.VarChar(8)
+  class          PlayerClass
+  number         Int?
+
+  seasonRoster SeasonRoster @relation(fields: [seasonRosterId], references: [id], onDelete: Cascade)
+  player       Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonRosterId, playerId])
+  @@map("season_players")
 }
 
 /// One game in a season, with the final scoreboard. Player and team stat lines
@@ -93,8 +113,21 @@ model Game {
   date       DateTime?    @db.Date
   opponent   String
   location   GameLocation @default(HOME)
+  // Final score (kept as the source of truth for W/L + season aggregation). When
+  // quarter scores are entered, these are set to the sum of the quarters + OT.
   teamPoints Int          @default(0) @map("team_points")
   oppPoints  Int          @default(0) @map("opp_points")
+  // Per-quarter scoring. OT is a single bucket (0 when the game didn't go to OT).
+  teamQ1     Int          @default(0) @map("team_q1")
+  teamQ2     Int          @default(0) @map("team_q2")
+  teamQ3     Int          @default(0) @map("team_q3")
+  teamQ4     Int          @default(0) @map("team_q4")
+  teamOt     Int          @default(0) @map("team_ot")
+  oppQ1      Int          @default(0) @map("opp_q1")
+  oppQ2      Int          @default(0) @map("opp_q2")
+  oppQ3      Int          @default(0) @map("opp_q3")
+  oppQ4      Int          @default(0) @map("opp_q4")
+  oppOt      Int          @default(0) @map("opp_ot")
   createdAt  DateTime     @default(now()) @map("created_at")
 
   season      Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)

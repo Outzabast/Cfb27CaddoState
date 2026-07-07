@@ -1,4 +1,4 @@
-import { PlayerClass, GameLocation } from "@/generated/prisma/enums";
+import type { PlayerClass, GameLocation } from "@/generated/prisma/enums";
 
 /** Display labels for each class enum value. */
 export const CLASS_LABELS: Record<PlayerClass, string> = {
@@ -54,6 +54,30 @@ export function advanceClass(current: PlayerClass): PlayerClass {
 
 export function isValidClass(value: string): value is PlayerClass {
   return value in CLASS_LABELS;
+}
+
+// Accept full names and common abbreviations / OCR-friendly spellings when
+// importing rosters. Keys are compared after lowercasing, replacing "-" with a
+// space, and collapsing whitespace.
+const CLASS_ALIASES: Record<string, PlayerClass> = {
+  fr: "FRESHMAN", fresh: "FRESHMAN", freshman: "FRESHMAN",
+  "rs fr": "REDSHIRT_FRESHMAN", rsfr: "REDSHIRT_FRESHMAN", rfr: "REDSHIRT_FRESHMAN",
+  "r fr": "REDSHIRT_FRESHMAN", "redshirt freshman": "REDSHIRT_FRESHMAN",
+  so: "SOPHOMORE", soph: "SOPHOMORE", sophomore: "SOPHOMORE", sophmore: "SOPHOMORE",
+  "rs so": "REDSHIRT_SOPHOMORE", rso: "REDSHIRT_SOPHOMORE",
+  "redshirt sophomore": "REDSHIRT_SOPHOMORE", "redshirt sophmore": "REDSHIRT_SOPHOMORE",
+  jr: "JUNIOR", junior: "JUNIOR",
+  "rs jr": "REDSHIRT_JUNIOR", rjr: "REDSHIRT_JUNIOR", "redshirt junior": "REDSHIRT_JUNIOR",
+  sr: "SENIOR", senior: "SENIOR",
+  "rs sr": "REDSHIRT_SENIOR", rsr: "REDSHIRT_SENIOR", "redshirt senior": "REDSHIRT_SENIOR",
+  gr: "GRADUATED", grad: "GRADUATED", graduate: "GRADUATED", graduated: "GRADUATED",
+  transfer: "TRANSFERRED", transferred: "TRANSFERRED", xfer: "TRANSFERRED",
+};
+
+/** Resolve a raw class string (full name or abbreviation) to the enum, or null. */
+export function normalizeClass(raw: string): PlayerClass | null {
+  const key = raw.trim().toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ");
+  return CLASS_ALIASES[key] ?? null;
 }
 
 export const LOCATION_LABELS: Record<GameLocation, string> = {

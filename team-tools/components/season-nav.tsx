@@ -7,11 +7,12 @@ export function SeasonNav({
   active,
 }: {
   seasonId: number;
-  active: "roster" | "schedule";
+  active: "roster" | "schedule" | "stats";
 }) {
   const tabs = [
     { key: "roster", label: "Roster", href: `/seasons/${seasonId}/roster` },
     { key: "schedule", label: "Schedule", href: `/seasons/${seasonId}/schedule` },
+    { key: "stats", label: "Team Stats", href: `/seasons/${seasonId}/stats` },
   ] as const;
 
   return (

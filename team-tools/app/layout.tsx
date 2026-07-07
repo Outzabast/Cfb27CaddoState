@@ -39,6 +39,9 @@ export default function RootLayout({
               <Link href="/seasons" className="hover:text-foreground">
                 Seasons
               </Link>
+              <Link href="/players" className="hover:text-foreground">
+                Players
+              </Link>
             </nav>
           </div>
         </header>

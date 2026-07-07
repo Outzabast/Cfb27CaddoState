@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { createSeason, deleteSeason, advanceSeason } from "./actions";
 import { ConfirmButton } from "@/components/confirm-button";
+import { SaveForm } from "@/components/save-form";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +25,10 @@ import {
 export default async function SeasonsPage() {
   const seasons = await db.season.findMany({
     orderBy: { startYear: "desc" },
-    include: { _count: { select: { rosterEntries: true, games: true } } },
+    include: {
+      _count: { select: { games: true } },
+      roster: { include: { _count: { select: { players: true } } } },
+    },
   });
 
   const latest = seasons[0];
@@ -39,7 +43,11 @@ export default async function SeasonsPage() {
           </p>
         </div>
         {latest && (
-          <form action={advanceSeason}>
+          <SaveForm
+            action={advanceSeason}
+            loadingText="Advancing season…"
+            successText="Season advanced"
+          >
             <input type="hidden" name="fromSeasonId" value={latest.id} />
             <ConfirmButton
               type="submit"
@@ -47,7 +55,7 @@ export default async function SeasonsPage() {
             >
               Advance from {latest.name}
             </ConfirmButton>
-          </form>
+          </SaveForm>
         )}
       </div>
 
@@ -69,7 +77,7 @@ export default async function SeasonsPage() {
             {seasons.map((s) => (
               <TableRow key={s.id}>
                 <TableCell className="font-medium">{s.name}</TableCell>
-                <TableCell className="text-right">{s._count.rosterEntries}</TableCell>
+                <TableCell className="text-right">{s.roster?._count.players ?? 0}</TableCell>
                 <TableCell className="text-right">{s._count.games}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
@@ -85,7 +93,7 @@ export default async function SeasonsPage() {
                     >
                       Schedule
                     </Link>
-                    <form action={deleteSeason}>
+                    <SaveForm action={deleteSeason} successText={`${s.name} deleted`}>
                       <input type="hidden" name="seasonId" value={s.id} />
                       <ConfirmButton
                         type="submit"
@@ -95,7 +103,7 @@ export default async function SeasonsPage() {
                       >
                         Delete
                       </ConfirmButton>
-                    </form>
+                    </SaveForm>
                   </div>
                 </TableCell>
               </TableRow>
@@ -113,7 +121,11 @@ export default async function SeasonsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form action={createSeason} className="grid gap-4 sm:grid-cols-3">
+          <SaveForm
+            action={createSeason}
+            successText="Season created"
+            className="grid gap-4 sm:grid-cols-3"
+          >
             <div className="grid gap-2 sm:col-span-3">
               <Label htmlFor="name">Name</Label>
               <Input id="name" name="name" placeholder="2026-2027" required />
@@ -141,7 +153,7 @@ export default async function SeasonsPage() {
             <div className="flex items-end">
               <Button type="submit">Create season</Button>
             </div>
-          </form>
+          </SaveForm>
         </CardContent>
       </Card>
     </div>
