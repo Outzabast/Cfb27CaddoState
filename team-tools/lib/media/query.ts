@@ -17,6 +17,7 @@ type Row = {
   id: number;
   headline: string | null;
   body: string | null;
+  photoCaption: string | null;
   status: MediaListItem["status"];
   scope: MediaListItem["scope"];
   mediaType: MediaListItem["mediaType"];
@@ -46,7 +47,8 @@ function toItem(m: Row): MediaListItem {
     subjectLabel,
     authorId: m.authorPersona?.id ?? null,
     authorName: m.authorPersona?.name ?? null,
-    hasPhoto: false, // not shown in the list; kept off the query to avoid loading bytes
+    photoCaption: m.photoCaption,
+    hasPhoto: false, // set by the caller (cheap presence check, no bytes loaded)
     excerpt: excerpt(m.body),
   };
 }
@@ -55,6 +57,7 @@ const listSelect = {
   id: true,
   headline: true,
   body: true,
+  photoCaption: true,
   status: true,
   scope: true,
   mediaType: true,
@@ -82,6 +85,7 @@ export function clampPageSize(n: unknown): number {
 export type MediaQuery =
   | { kind: "all" }
   | { kind: "unviewed" }
+  | { kind: "images" }
   | { kind: "season"; seasonId: number }
   | { kind: "player"; playerId: number };
 
@@ -89,6 +93,9 @@ function whereFor(q: MediaQuery) {
   switch (q.kind) {
     case "unviewed":
       return { viewed: false, status: "READY" as const };
+    case "images":
+      // Ready pieces that carry a header image (for the Images gallery).
+      return { status: "READY" as const, photo: { not: null } };
     case "season":
       return { OR: [{ seasonId: q.seasonId }, { game: { seasonId: q.seasonId } }] };
     case "player":

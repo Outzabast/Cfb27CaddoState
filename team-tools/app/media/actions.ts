@@ -7,8 +7,9 @@ import { db } from "@/lib/db";
 import { runGeneration } from "@/lib/media/generate";
 import { postMediaEvent, processMediaEvent, readIdList } from "@/lib/media/media-space";
 import { MEDIA_TYPES } from "@/lib/media/constants";
+import { angleBySlug } from "@/lib/media/angles";
 import { fetchMediaPage, type MediaPage, type MediaQuery } from "@/lib/media/query";
-import type { MediaScope, MediaType } from "@/generated/prisma/enums";
+import type { MediaType } from "@/generated/prisma/enums";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -38,14 +39,17 @@ export async function updateMedia(formData: FormData) {
   if (!headline) throw new Error("A headline is required.");
   if (!body) throw new Error("The article body can't be empty.");
 
+  const caption = String(formData.get("photoCaption") ?? "").trim();
   const data: {
     headline: string;
     body: string;
+    photoCaption: string | null;
     photo?: Uint8Array<ArrayBuffer> | null;
-  } = { headline, body };
+  } = { headline, body, photoCaption: caption || null };
 
   if (formData.get("removePhoto")) {
     data.photo = null;
+    data.photoCaption = null;
   } else {
     const file = formData.get("photo");
     if (file instanceof File && file.size > 0) {
@@ -134,8 +138,9 @@ export async function deleteMediaEvent(formData: FormData) {
  * subject (a game / season / player), which personas write it, and any context.
  */
 export async function createManualEvent(formData: FormData) {
-  const scope = String(formData.get("scope") ?? "") as MediaScope;
-  if (!["GAME", "TEAM", "PLAYER"].includes(scope)) throw new Error("Pick what this is about.");
+  const meta = angleBySlug(String(formData.get("angle") ?? ""));
+  if (!meta) throw new Error("Pick an article type.");
+  const scope = meta.scope;
 
   const mediaTypeRaw = String(formData.get("mediaType") ?? "ARTICLE");
   const mediaType = (MEDIA_TYPES as string[]).includes(mediaTypeRaw)
@@ -145,16 +150,18 @@ export async function createManualEvent(formData: FormData) {
   const context = String(formData.get("mediaContext") ?? "").trim() || null;
   const personaIds = readIdList(formData, "mediaPersonaId");
 
-  if (scope === "PLAYER") {
-    // One article about one or more selected players.
+  if (meta.subject === "players") {
+    // One article about one or more selected players, optionally focused on games.
     const subjects = readIdList(formData, "subjectPlayerId");
     if (subjects.length === 0) throw new Error("Pick at least one player.");
     await postMediaEvent({
       type: "MANUAL",
       scope,
+      angle: meta.slug,
       mediaType,
       playerId: subjects[0],
       playerIds: subjects.slice(1), // additional subjects of the same article
+      gameIds: readIdList(formData, "focusGameId"),
       context,
       personaIds,
     });
@@ -164,6 +171,7 @@ export async function createManualEvent(formData: FormData) {
     await postMediaEvent({
       type: "MANUAL",
       scope,
+      angle: meta.slug,
       mediaType,
       gameId: scope === "GAME" ? subjectId : null,
       seasonId: scope === "TEAM" ? subjectId : null,

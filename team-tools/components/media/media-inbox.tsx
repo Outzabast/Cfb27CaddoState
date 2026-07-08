@@ -23,6 +23,7 @@ export type MediaListItem = {
   subjectLabel: string;
   authorId: number | null;
   authorName: string | null;
+  photoCaption: string | null;
   hasPhoto: boolean;
   excerpt: string | null;
 };

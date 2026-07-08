@@ -156,6 +156,7 @@ export const BOX_CATEGORIES: BoxCategory[] = [
       l.defInt > 0 ||
       l.passesDefended > 0 ||
       l.forcedFumbles > 0 ||
+      l.fumblesRec > 0 ||
       l.defTd > 0,
     cols: [
       {

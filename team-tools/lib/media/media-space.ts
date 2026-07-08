@@ -14,14 +14,18 @@ export type PostEventInput = {
   type: MediaEventType;
   scope: MediaScope;
   mediaType?: MediaType;
+  /** Article angle slug (recap/preview/season/feature/injury…); null = scope default. */
+  angle?: string | null;
   playerId?: number | null;
   gameId?: number | null;
   seasonId?: number | null;
   context?: string | null;
   /** Author personas to write as — one piece each. Empty = one default-voice piece. */
   personaIds?: number[];
-  /** Extra players to also generate individual features for (default none). */
+  /** GAME/TEAM: extra players to feature separately. PLAYER: extra subjects of one piece. */
   playerIds?: number[];
+  /** Focus games (e.g. a player feature centered on these games). */
+  gameIds?: number[];
 };
 
 /**
@@ -34,6 +38,7 @@ export async function postMediaEvent(input: PostEventInput): Promise<number> {
       type: input.type,
       scope: input.scope,
       mediaType: input.mediaType ?? "ARTICLE",
+      angle: input.angle ?? null,
       status: "PENDING",
       playerId: input.scope === "PLAYER" ? input.playerId ?? null : null,
       gameId: input.scope === "GAME" ? input.gameId ?? null : null,
@@ -41,6 +46,7 @@ export async function postMediaEvent(input: PostEventInput): Promise<number> {
       context: input.context?.trim() || null,
       personaIds: input.personaIds ?? [],
       playerIds: input.playerIds ?? [],
+      gameIds: input.gameIds ?? [],
     },
     select: { id: true },
   });
@@ -99,6 +105,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
           data: {
             mediaType: event.mediaType,
             scope: target.scope,
+            angle: event.angle,
             status: "PENDING",
             playerId: target.playerId,
             gameId: target.gameId,
@@ -109,11 +116,14 @@ export async function processMediaEvent(eventId: number): Promise<void> {
           },
           select: { id: true },
         });
-        // Tag the extra subject players so the piece is written about all of them.
-        if (isPlayerScope && event.playerIds.length) {
-          await db.mediaTag.createMany({
-            data: event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })),
-          });
+        // For a player piece, tag the extra subject players AND any focus games so
+        // generation writes about all of them / centers on those games.
+        if (isPlayerScope) {
+          const tags = [
+            ...event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })),
+            ...event.gameIds.map((gid) => ({ mediaId: media.id, gameId: gid })),
+          ];
+          if (tags.length) await db.mediaTag.createMany({ data: tags });
         }
         await runGeneration(media.id);
       }

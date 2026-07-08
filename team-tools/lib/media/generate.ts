@@ -7,7 +7,15 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE } from "./constants";
 import { writeArticle } from "./agent";
-import { describeGame, describePlayer, describePlayers, describeSeason } from "./subject";
+import {
+  describeGame,
+  describeGamePreview,
+  describeInjuryReport,
+  describePlayer,
+  describePlayers,
+  describeSeason,
+} from "./subject";
+import { angleBySlug, defaultAngleForScope } from "./angles";
 
 /** Resolve which OpenRouter model writes a given media type. */
 async function resolveModel(mediaType: "ARTICLE"): Promise<string> {
@@ -28,10 +36,19 @@ const SYSTEM_PREFACE =
   '{"headline": string, "body": string}. The body is the full article as plain text ' +
   "with paragraphs separated by blank lines; no markdown headers.";
 
-const SCOPE_LABEL = { GAME: "game recap", PLAYER: "player feature", TEAM: "team/season" } as const;
+// The writing task per angle. Falls back to a generic line for unknown slugs.
+const ANGLE_INSTRUCTION: Record<string, string> = {
+  recap: "Write a GAME RECAP from the box score — what happened and who decided it.",
+  preview:
+    "Write a GAME PREVIEW of this UPCOMING game. It has NOT been played — never state or imply a final score, stats, or result. Set the stage: the matchup, Caddo State's form, and players to watch.",
+  feature: "Write a PLAYER FEATURE.",
+  season: "Write a SEASON / TEAM story on the state of the program.",
+  injury: "Write an INJURY REPORT on the team's health, grounded in the listed injured players.",
+};
 
 type MediaRow = {
   scope: "PLAYER" | "GAME" | "TEAM";
+  angle: string | null;
   playerId: number | null;
   gameId: number | null;
   seasonId: number | null;
@@ -44,9 +61,11 @@ async function buildSeed(
   media: MediaRow,
   subject: string,
   subjectPlayerIds: number[],
+  focusGameIds: number[],
 ): Promise<string> {
+  const angle = media.angle ?? defaultAngleForScope(media.scope);
   const out: string[] = [];
-  out.push(`Write a ${SCOPE_LABEL[media.scope]} article for Caddo State.`);
+  out.push(ANGLE_INSTRUCTION[angle] ?? "Write a news article for Caddo State.");
   out.push("");
   out.push("PRIMARY SUBJECT DATA:");
   out.push(subject);
@@ -83,6 +102,18 @@ async function buildSeed(
     } else {
       out.push(`- This player: playerId ${media.playerId}`);
     }
+    if (focusGameIds.length) {
+      const games = await db.game.findMany({
+        where: { id: { in: focusGameIds } },
+        select: { id: true, opponent: true, week: true },
+      });
+      out.push(
+        "- Focus games (center the piece on the subject's performance in these): " +
+          games
+            .map((g) => `vs ${g.opponent}${g.week != null ? ` Wk ${g.week}` : ""} (gameId ${g.id})`)
+            .join(", "),
+      );
+    }
   } else if (media.scope === "TEAM" && media.seasonId != null) {
     out.push(`- This season: seasonId ${media.seasonId}`);
   }
@@ -114,26 +145,35 @@ export async function runGeneration(mediaId: number): Promise<void> {
   try {
     await db.media.update({ where: { id: mediaId }, data: { status: "GENERATING" } });
 
+    const angle = media.angle ?? defaultAngleForScope(media.scope);
+    const isPreview = angle === "preview";
+    const isInjury = angle === "injury";
+
     let subject: string;
     let subjectPlayerIds: number[] = [];
+    let focusGameIds: number[] = [];
     if (media.scope === "GAME" && media.gameId != null) {
-      subject = await describeGame(media.gameId);
+      subject = isPreview ? await describeGamePreview(media.gameId) : await describeGame(media.gameId);
     } else if (media.scope === "PLAYER" && media.playerId != null) {
-      // A player article can cover several players (tagged via MediaTag).
+      // A player article can cover several players (tagged via MediaTag), and can
+      // be focused on specific games (also MediaTag).
       const tags = await db.mediaTag.findMany({
-        where: { mediaId, playerId: { not: null } },
-        select: { playerId: true },
+        where: { mediaId },
+        select: { playerId: true, gameId: true },
       });
       subjectPlayerIds = [
         media.playerId,
-        ...tags.map((t) => t.playerId!).filter((id) => id !== media.playerId),
+        ...tags.map((t) => t.playerId).filter((id): id is number => id != null && id !== media.playerId),
       ];
+      focusGameIds = tags.map((t) => t.gameId).filter((id): id is number => id != null);
       subject =
         subjectPlayerIds.length > 1
           ? await describePlayers(subjectPlayerIds)
           : await describePlayer(media.playerId);
     } else if (media.scope === "TEAM" && media.seasonId != null) {
-      subject = await describeSeason(media.seasonId);
+      subject = isInjury
+        ? await describeInjuryReport(media.seasonId)
+        : await describeSeason(media.seasonId);
     } else {
       throw new Error("Media is missing a subject to write about.");
     }
@@ -141,7 +181,7 @@ export async function runGeneration(mediaId: number): Promise<void> {
     const model = await resolveModel(media.mediaType);
     const voice = media.authorPersona?.voice || DEFAULT_VOICE;
     const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
-    const seed = await buildSeed(media, subject, subjectPlayerIds);
+    const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds);
 
     const { headline, body, costUsd } = await writeArticle(model, system, seed);
 

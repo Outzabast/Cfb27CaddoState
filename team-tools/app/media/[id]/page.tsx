@@ -154,12 +154,19 @@ export default async function MediaDetailPage({
             {media.headline}
           </h1>
           {hasPhoto && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`/media/${id}/photo?v=${media.updatedAt.getTime()}`}
-              alt=""
-              className="w-full rounded-md border object-cover"
-            />
+            <figure className="space-y-1.5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`/media/${id}/photo?v=${media.updatedAt.getTime()}`}
+                alt=""
+                className="w-full rounded-md border object-cover"
+              />
+              {media.photoCaption && (
+                <figcaption className="text-xs italic text-muted-foreground">
+                  {media.photoCaption}
+                </figcaption>
+              )}
+            </figure>
           )}
           <div className="space-y-4 text-[0.95rem] leading-relaxed text-foreground/90">
             {paragraphs.map((p, i) => (
@@ -201,6 +208,12 @@ export default async function MediaDetailPage({
           <div className="grid gap-2">
             <Label htmlFor="photo">Header image (PNG)</Label>
             <input id="photo" name="photo" type="file" accept="image/png" className="text-sm" />
+            <Input
+              id="photoCaption"
+              name="photoCaption"
+              defaultValue={media.photoCaption ?? ""}
+              placeholder="Image caption (optional)"
+            />
             {hasPhoto && (
               <label className="flex items-center gap-2 text-sm text-muted-foreground">
                 <input type="checkbox" name="removePhoto" /> Remove current image

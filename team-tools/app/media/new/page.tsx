@@ -9,7 +9,15 @@ export default async function NewMediaEventPage() {
     db.season.findMany({ orderBy: { startYear: "desc" }, select: { id: true, name: true } }),
     db.game.findMany({
       orderBy: [{ season: { startYear: "desc" } }, { week: "asc" }],
-      select: { id: true, opponent: true, week: true, location: true, season: { select: { name: true } } },
+      select: {
+        id: true,
+        opponent: true,
+        week: true,
+        location: true,
+        teamPoints: true,
+        oppPoints: true,
+        season: { select: { name: true } },
+      },
     }),
     db.player.findMany({
       orderBy: { name: "asc" },
@@ -30,6 +38,7 @@ export default async function NewMediaEventPage() {
   const gameOptions = games.map((g) => ({
     id: g.id,
     label: `${g.season.name} · ${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}${g.week != null ? ` (Wk ${g.week})` : ""}`,
+    played: g.teamPoints !== 0 || g.oppPoints !== 0,
   }));
 
   const playerOptions = players.map((p) => ({

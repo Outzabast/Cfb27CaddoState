@@ -462,10 +462,12 @@ model Media {
   status    MediaGenStatus @default(PENDING)
 
   // Content. Null until generation completes; photo is a user-added header image
-  // (like Player.photo) — the model doesn't produce images yet.
-  headline String?
-  body     String?
-  photo    Bytes?
+  // (like Player.photo) — the model doesn't produce images yet. photoCaption is
+  // the optional subtitle shown under the image and in the Images gallery.
+  headline     String?
+  body         String?
+  photo        Bytes?
+  photoCaption String? @map("photo_caption")
 
   // Inbox state: false until you open it, drives the "unviewed" badge on /media.
   viewed Boolean @default(false)
@@ -474,6 +476,10 @@ model Media {
   // type when triggering (NIL deal, walk-off catch, ...). modelId/costUsd record
   // which OpenRouter model wrote it and the billed cost; genError holds the reason
   // when status is FAILED.
+  /// The article angle/template (slug: recap, preview, season, feature, injury…).
+  /// Drives which subject brief + writing instruction generation uses. Null falls
+  /// back to the scope default.
+  angle           String? @map("angle")
   promptContext   String? @map("prompt_context")
   modelId         String? @map("model_id")
   costUsd         Float?  @map("cost_usd")
@@ -540,6 +546,8 @@ model MediaEvent {
   status    MediaEventStatus @default(PENDING)
   scope     MediaScope
   mediaType MediaType        @default(ARTICLE) @map("media_type")
+  /// Article angle slug (recap/preview/season/feature/injury…); null = scope default.
+  angle     String?
 
   // Subject anchor, matching `scope` (as on Media).
   playerId Int? @map("player_id")
@@ -549,11 +557,14 @@ model MediaEvent {
   // The editor's added context. `personaIds` = which author personas to write as
   // (one piece each; empty = a single piece in the default voice). `playerIds` =
   // extra players to also generate individual features for (a GAME event fans out
-  // to a recap + one feature per listed player). All the media an event produces
-  // point back at it, so deleting the event removes them together.
+  // to a recap + one feature per listed player); for a PLAYER event they are extra
+  // subjects of one article. `gameIds` = focus games (e.g. a player feature centered
+  // on those games). All the media an event produces point back at it, so deleting
+  // the event removes them together.
   context    String?
   personaIds Int[]   @default([]) @map("persona_ids")
   playerIds  Int[]   @default([]) @map("player_ids")
+  gameIds    Int[]   @default([]) @map("game_ids")
   error      String?
 
   createdAt DateTime @default(now()) @map("created_at")

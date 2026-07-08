@@ -12,6 +12,7 @@ import {
   aggregateSelect,
   mergeAggregate,
 } from "@/lib/stat-fields";
+import { computeRecord, formatRecord } from "@/lib/season-record";
 
 const STAT_FIELDS = PLAYER_STAT_GROUPS.flatMap((g) => g.fields);
 function hasAnyStat(line: Record<string, number>): boolean {
@@ -242,6 +243,89 @@ export async function describeSeason(seasonId: number): Promise<string> {
     out.push(
       `  Wk ${g.week ?? "—"} ${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}: ` +
         (played ? `${r} ${g.teamPoints}-${g.oppPoints}` : "not yet played"),
+    );
+  }
+  return out.join("\n");
+}
+
+/** An UPCOMING game's preview brief: matchup, Caddo State's form, players to
+ *  watch. No box score — the game hasn't been played. */
+export async function describeGamePreview(gameId: number): Promise<string> {
+  const game = await db.game.findUnique({
+    where: { id: gameId },
+    include: { season: { include: { games: true } } },
+  });
+  if (!game) throw new Error("Game not found.");
+
+  const loc = game.location === "AWAY" ? "at " : game.location === "NEUTRAL" ? "vs (neutral) " : "vs ";
+  const rec = computeRecord(game.season.games);
+
+  const out: string[] = [];
+  out.push(`GAME PREVIEW — Caddo State ${loc}${game.opponent}`);
+  out.push(
+    `Season: ${game.season.name}` +
+      (game.week != null ? `, Week ${game.week}` : "") +
+      (game.date ? `, ${game.date.toISOString().slice(0, 10)}` : ""),
+  );
+  out.push("This game has NOT been played yet — do not invent a score, stats, or result.");
+  out.push(`Caddo State record entering: ${formatRecord(rec)}`);
+
+  const played = game.season.games
+    .filter((g) => g.id !== gameId && (g.teamPoints !== 0 || g.oppPoints !== 0))
+    .sort((a, b) => (b.week ?? 0) - (a.week ?? 0))
+    .slice(0, 3);
+  if (played.length) {
+    out.push("");
+    out.push("Recent Caddo State results:");
+    for (const g of played) {
+      out.push(
+        `  Wk ${g.week ?? "—"} ${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}: ` +
+          `${resultWord(g.teamPoints, g.oppPoints)} ${g.teamPoints}-${g.oppPoints}`,
+      );
+    }
+  }
+
+  const roster = await db.seasonPlayer.findMany({
+    where: { seasonRoster: { seasonId: game.seasonId } },
+    orderBy: { seasonNotoriety: "desc" },
+    take: 6,
+    select: { playerId: true, playerName: true, position: true, seasonNotoriety: true },
+  });
+  if (roster.length) {
+    out.push("");
+    out.push("Caddo State players to watch:");
+    for (const p of roster) {
+      out.push(`  ${p.playerName} (${p.position}, notoriety ${p.seasonNotoriety}) [playerId ${p.playerId}]`);
+    }
+  }
+  out.push("");
+  out.push(`Opponent: ${game.opponent}. Preview the matchup and what Caddo State needs to do to win.`);
+  return out.join("\n");
+}
+
+/** An injury report: which rostered players are hurt, and the details. */
+export async function describeInjuryReport(seasonId: number): Promise<string> {
+  const season = await db.season.findUnique({ where: { id: seasonId }, select: { name: true } });
+  const injured = await db.seasonPlayer.findMany({
+    where: { seasonRoster: { seasonId }, player: { status: "INJURED" } },
+    select: {
+      position: true,
+      playerName: true,
+      player: { select: { injuryDetails: true } },
+    },
+  });
+
+  const out: string[] = [];
+  out.push(`INJURY REPORT — Caddo State, ${season?.name ?? ""}`);
+  if (injured.length === 0) {
+    out.push("No players are currently listed as injured. Write a short, positive health update.");
+    return out.join("\n");
+  }
+  out.push("Injured players (on injured reserve):");
+  for (const sp of injured) {
+    out.push(
+      `  ${sp.playerName} (${sp.position})` +
+        (sp.player.injuryDetails ? ` — ${sp.player.injuryDetails}` : " — no details provided"),
     );
   }
   return out.join("\n");
