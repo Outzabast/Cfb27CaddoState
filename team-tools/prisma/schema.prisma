@@ -653,6 +653,9 @@ model AuthorPersona {
   id        Int      @id @default(autoincrement())
   name      String   @unique
   voice     String
+  /// Pin the OpenRouter TEXT model this persona writes with (articles, social,
+  /// and the audio script). Null falls back to the media type's ModelSetting.
+  modelId   String?  @map("model_id")
   /// OpenAI TTS voice this persona narrates AUDIO media with (alloy, ash, …). Null
   /// falls back to the default voice.
   ttsVoice  String?  @map("tts_voice")

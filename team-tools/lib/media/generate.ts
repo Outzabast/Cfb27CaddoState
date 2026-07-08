@@ -195,8 +195,10 @@ export async function runGeneration(mediaId: number): Promise<void> {
       throw new Error("Media is missing a subject to write about.");
     }
 
-    const model = await resolveModel(media.mediaType);
     const voice = media.authorPersona?.voice || DEFAULT_VOICE;
+    // A persona can pin its own TEXT model; otherwise use the media type's setting.
+    const personaModel = media.authorPersona?.modelId || null;
+    const model = personaModel ?? (await resolveModel(media.mediaType));
 
     if (media.mediaType === "XPOST") {
       // Social post: the account's voice + a reply cast of the OTHER active personas.
@@ -233,15 +235,17 @@ export async function runGeneration(mediaId: number): Promise<void> {
         });
       }
     } else if (media.mediaType === "AUDIO") {
-      // Two-step: write the monologue SCRIPT with the text model, then narrate it
-      // with the AUDIO model (`model`) + the persona's TTS voice.
-      const scriptModel = await resolveModel("ARTICLE");
+      // Two-step: write the monologue SCRIPT with a TEXT model (persona's pinned
+      // model, else the ARTICLE setting), then narrate it with the AUDIO model +
+      // the persona's TTS voice.
+      const scriptModel = personaModel ?? (await resolveModel("ARTICLE"));
+      const audioModel = await resolveModel("AUDIO");
       const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
       const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds, "audio");
       const script = await writeArticle(scriptModel, system, seed);
 
       const ttsVoice = media.authorPersona?.ttsVoice || DEFAULT_TTS_VOICE;
-      const speech = await synthesizeSpeech(model, ttsVoice, script.body);
+      const speech = await synthesizeSpeech(audioModel, ttsVoice, script.body);
 
       await db.media.update({
         where: { id: mediaId },
@@ -252,7 +256,7 @@ export async function runGeneration(mediaId: number): Promise<void> {
           audioMime: speech.mime,
           audioSeconds: speech.seconds,
           status: "READY",
-          modelId: model,
+          modelId: audioModel,
           costUsd: (script.costUsd ?? 0) + (speech.costUsd ?? 0),
           genError: null,
         },

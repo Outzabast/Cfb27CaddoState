@@ -12,10 +12,10 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { MediaInbox } from "@/components/media/media-inbox";
 import { MediaImageGallery } from "@/components/media/media-image-gallery";
-import { SocialFeed } from "@/components/media/social-feed";
+import { SocialFeedList } from "@/components/media/social-feed-list";
 import { AudioFeed } from "@/components/media/audio-feed";
 import { fetchMediaPage, unviewedCount, type MediaQuery } from "@/lib/media/query";
-import { fetchSocialFeed } from "@/lib/media/social-feed";
+import { fetchSocialFeedPage } from "@/lib/media/social-feed";
 import { fetchAudioFeed } from "@/lib/media/audio-feed";
 import { db } from "@/lib/db";
 import { cn } from "@/lib/utils";
@@ -51,7 +51,8 @@ export default async function MediaHubPage({
     const page = await fetchMediaPage({ kind: "images" }, 12, null);
     content = <MediaImageGallery initialItems={page.items} initialCursor={page.nextCursor} />;
   } else if (section === "social") {
-    content = <SocialFeed posts={await fetchSocialFeed()} />;
+    const page = await fetchSocialFeedPage({}, 10, null);
+    content = <SocialFeedList initialItems={page.items} initialCursor={page.nextCursor} scope={{}} />;
   } else if (section === "audio") {
     content = <AudioFeed posts={await fetchAudioFeed()} />;
   } else {

@@ -41,7 +41,14 @@ export async function createPersona(formData: FormData) {
   if (!name) throw new Error("Give the persona a name.");
   if (!voice) throw new Error("Describe how this author writes.");
 
-  await db.authorPersona.create({ data: { name, voice, ttsVoice: parseVoice(formData.get("ttsVoice")) } });
+  await db.authorPersona.create({
+    data: {
+      name,
+      voice,
+      ttsVoice: parseVoice(formData.get("ttsVoice")),
+      modelId: String(formData.get("modelId") ?? "").trim() || null,
+    },
+  });
   revalidatePath(SETTINGS_PATH);
 }
 
@@ -56,7 +63,13 @@ export async function updatePersona(formData: FormData) {
 
   await db.authorPersona.update({
     where: { id },
-    data: { name, voice, ttsVoice: parseVoice(formData.get("ttsVoice")), active: formData.get("active") != null },
+    data: {
+      name,
+      voice,
+      ttsVoice: parseVoice(formData.get("ttsVoice")),
+      modelId: String(formData.get("modelId") ?? "").trim() || null,
+      active: formData.get("active") != null,
+    },
   });
   revalidatePath(SETTINGS_PATH);
 }

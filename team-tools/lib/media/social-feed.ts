@@ -47,43 +47,77 @@ export function tagsToHashtags(tags: {
   return [...out];
 }
 
-/** Recent social posts (newest first). Includes not-yet-ready ones so the feed
- *  reflects freshly-posted items. */
-export async function fetchSocialFeed(limit = 40): Promise<SocialPost[]> {
-  const rows = await db.media.findMany({
-    where: { mediaType: "XPOST" },
-    orderBy: { id: "desc" },
-    take: limit,
+export type SocialFeedScope = {
+  playerId?: number;
+  seasonId?: number;
+  limit?: number;
+  /** Only finished posts (for embeds on player/season pages). */
+  readyOnly?: boolean;
+};
+
+/** Recent social posts (newest first). Unscoped = the whole feed (incl. in-flight
+ *  posts); pass a playerId/seasonId to embed a subject's posts elsewhere. */
+export type SocialFeedPage = { items: SocialPost[]; nextCursor: number | null };
+
+const SELECT = {
+  id: true,
+  body: true,
+  status: true,
+  genError: true,
+  createdAt: true,
+  seasonId: true,
+  authorPersona: { select: { name: true } },
+  tags: {
+    select: {
+      player: { select: { name: true } },
+      game: { select: { opponent: true } },
+      season: { select: { name: true } },
+    },
+  },
+  socialReplies: {
+    orderBy: { sortOrder: "asc" as const },
     select: {
       id: true,
+      handle: true,
+      displayName: true,
       body: true,
-      status: true,
-      genError: true,
-      createdAt: true,
-      seasonId: true,
+      likes: true,
       authorPersona: { select: { name: true } },
-      tags: {
-        select: {
-          player: { select: { name: true } },
-          game: { select: { opponent: true } },
-          season: { select: { name: true } },
-        },
-      },
-      socialReplies: {
-        orderBy: { sortOrder: "asc" },
-        select: {
-          id: true,
-          handle: true,
-          displayName: true,
-          body: true,
-          likes: true,
-          authorPersona: { select: { name: true } },
-        },
-      },
     },
-  });
+  },
+} as const;
 
-  return rows.map((m) => {
+function whereForScope(scope: SocialFeedScope): Record<string, unknown> {
+  const where: Record<string, unknown> = { mediaType: "XPOST" };
+  if (scope.readyOnly) where.status = "READY";
+  if (scope.playerId != null) {
+    where.OR = [{ playerId: scope.playerId }, { tags: { some: { playerId: scope.playerId } } }];
+  } else if (scope.seasonId != null) {
+    where.OR = [
+      { seasonId: scope.seasonId },
+      { game: { seasonId: scope.seasonId } },
+      { tags: { some: { seasonId: scope.seasonId } } },
+    ];
+  }
+  return where;
+}
+
+/** Core query: one page of posts (newest first), cursor-based on id. */
+async function queryPage(
+  scope: SocialFeedScope,
+  take: number,
+  cursor: number | null,
+): Promise<SocialFeedPage> {
+  const rows = await db.media.findMany({
+    where: whereForScope(scope),
+    orderBy: { id: "desc" },
+    take: take + 1,
+    ...(cursor != null ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: SELECT,
+  });
+  const hasMore = rows.length > take;
+  const page = hasMore ? rows.slice(0, take) : rows;
+  const items: SocialPost[] = page.map((m) => {
     const authorName = m.authorPersona?.name ?? "Caddo State";
     return {
       id: m.id,
@@ -106,4 +140,21 @@ export async function fetchSocialFeed(limit = 40): Promise<SocialPost[]> {
       })),
     };
   });
+  return { items, nextCursor: hasMore && page.length ? page[page.length - 1].id : null };
+}
+
+/** Non-paginated recent posts (for embeds on player/season pages). */
+export async function fetchSocialFeed(scope: SocialFeedScope = {}): Promise<SocialPost[]> {
+  const { items } = await queryPage(scope, scope.limit ?? 40, null);
+  return items;
+}
+
+/** One cursor page of posts (for the media page's Social feed). */
+export function fetchSocialFeedPage(
+  scope: SocialFeedScope,
+  pageSize: number,
+  cursor: number | null,
+): Promise<SocialFeedPage> {
+  const take = Math.min(100, Math.max(1, Math.trunc(pageSize) || 10));
+  return queryPage(scope, take, cursor);
 }

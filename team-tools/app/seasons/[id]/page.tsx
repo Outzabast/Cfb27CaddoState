@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { SeasonNav } from "@/components/season-nav";
 import { ResultBadge } from "@/components/result-badge";
 import { NewsTeaser } from "@/components/media/news-teaser";
+import { SocialFeed } from "@/components/media/social-feed";
+import { fetchSocialFeed } from "@/lib/media/social-feed";
 import { StaffSection } from "@/components/staff-section";
 
 function result(t: number, o: number): "W" | "L" | "T" | null {
@@ -31,11 +33,12 @@ export default async function SeasonHomePage({
 
   // Recent generated articles for this season (recaps + team stories).
   const news = await db.media.findMany({
-    where: { status: "READY", OR: [{ seasonId }, { game: { seasonId } }] },
+    where: { mediaType: "ARTICLE", status: "READY", OR: [{ seasonId }, { game: { seasonId } }] },
     orderBy: { createdAt: "desc" },
     take: 4,
     select: { id: true, headline: true, viewed: true },
   });
+  const socialPosts = await fetchSocialFeed({ seasonId, limit: 6, readyOnly: true });
 
   let wins = 0,
     losses = 0,
@@ -158,6 +161,13 @@ export default async function SeasonHomePage({
           </section>
         </div>
       </div>
+
+      {socialPosts.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="eyebrow !text-foreground">Recent Social Media Posts</h2>
+          <SocialFeed posts={socialPosts} scroll />
+        </section>
+      )}
     </div>
   );
 }

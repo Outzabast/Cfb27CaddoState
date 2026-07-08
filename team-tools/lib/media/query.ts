@@ -99,9 +99,10 @@ function whereFor(q: MediaQuery) {
     case "season":
       return { OR: [{ seasonId: q.seasonId }, { game: { seasonId: q.seasonId } }] };
     case "player":
-      // As the primary subject OR tagged into a multi-player piece. Reader view →
-      // finished pieces only.
+      // Articles about a player (primary subject OR tagged), finished only —
+      // social posts get their own feed, not the Latest News list.
       return {
+        mediaType: "ARTICLE" as const,
         status: "READY" as const,
         OR: [{ playerId: q.playerId }, { tags: { some: { playerId: q.playerId } } }],
       };

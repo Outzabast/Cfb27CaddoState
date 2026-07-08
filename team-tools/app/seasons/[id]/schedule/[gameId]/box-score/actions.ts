@@ -124,6 +124,24 @@ export async function upsertPlayerStat(formData: FormData) {
   redirect(`${path}?mode=edit`);
 }
 
+/** Create or replace one player's stat line, staying put (for the dialog editor —
+ *  the caller closes the dialog + refreshes; no redirect). */
+export async function upsertPlayerStatLine(formData: FormData) {
+  const { gameId, path } = baseIds(formData);
+  const playerId = Number(formData.get("playerId"));
+  if (!Number.isInteger(playerId)) throw new Error("Pick a player.");
+
+  const data = parseStats(formData, PLAYER_STAT_GROUPS);
+  await db.gamePlayerStat.upsert({
+    where: { gameId_playerId: { gameId, playerId } },
+    create: { gameId, playerId, ...data },
+    update: data,
+  });
+
+  after(() => recomputeGame(gameId));
+  revalidatePath(path);
+}
+
 /**
  * Add all-zero stat lines for every rostered player who doesn't already have one
  * in this game. Lets you record the handful of players who did something and then

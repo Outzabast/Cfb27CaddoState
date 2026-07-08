@@ -1,17 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import {
-  PLAYER_STAT_GROUPS,
-  TEAM_STAT_GROUPS,
-  PLAYER_PCTS,
-  TEAM_PCTS,
-} from "@/lib/stat-fields";
+import { TEAM_STAT_GROUPS, TEAM_PCTS } from "@/lib/stat-fields";
 import { formatStatLine, type BoxLine } from "@/lib/box-score";
 import {
   upsertTeamStats,
   upsertOppStats,
-  upsertPlayerStat,
   zeroOutRoster,
   generateGameArticle,
 } from "./actions";
@@ -81,12 +75,8 @@ export default async function BoxScorePage({
     status: e.player.status,
   }));
 
-  const { player, mode } = await searchParams;
+  const { mode } = await searchParams;
   const isEdit = mode === "edit";
-  const selectedPlayerId = player ? Number(player) : undefined;
-  const editingLine = selectedPlayerId
-    ? game.playerStats.find((s) => s.playerId === selectedPlayerId)
-    : undefined;
 
   const backHref = `/seasons/${seasonId}/schedule`;
   const basePath = `${backHref}/${gid}/box-score`;
@@ -103,21 +93,18 @@ export default async function BoxScorePage({
     number: numberByPlayer.get(s.playerId) ?? null,
   }));
 
-  // ---- Edit-mode data (compact editable table) ----
+  // ---- Edit-mode data (table + dialog editor) ----
   const statRows: StatLineRow[] = game.playerStats.map((s) => ({
     playerId: s.playerId,
     name: s.player.name,
     position: positionByPlayer.get(s.playerId) ?? "",
-    passCmp: s.passCmp,
-    passAtt: s.passAtt,
-    passYds: s.passYds,
-    rushAtt: s.rushAtt,
-    rushYds: s.rushYds,
-    rec: s.rec,
-    recYds: s.recYds,
-    tackles: s.tacklesSolo + s.tacklesAst,
-    sacks: s.sacks,
     statLine: formatStatLine(s as unknown as Record<string, number>),
+    values: s as unknown as Record<string, number>,
+  }));
+  const addCandidates = availableRoster.map((e) => ({
+    playerId: e.playerId,
+    name: e.player.name,
+    position: e.position,
   }));
 
   return (
@@ -287,95 +274,13 @@ export default async function BoxScorePage({
                 </SaveForm>
               )}
             </div>
-            {statRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No player lines yet. Add one below, or zero out the whole roster.
-              </p>
-            ) : (
-              <PlayerStatTable
-                seasonId={seasonId}
-                gameId={gid}
-                basePath={basePath}
-                rows={statRows}
-              />
-            )}
+            <PlayerStatTable
+              seasonId={seasonId}
+              gameId={gid}
+              rows={statRows}
+              roster={addCandidates}
+            />
           </div>
-
-          {/* ---- Add / edit a player line ---- */}
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {editingLine ? `Edit ${editingLine.player.name}` : "Add player line"}
-              </CardTitle>
-              <CardDescription>
-                {editingLine
-                  ? "Update this player's stats for the game."
-                  : "Pick a rostered player (only those without a line yet) and enter their stats."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!editingLine && availableRoster.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Every rostered player already has a stat line for this game.
-                </p>
-              ) : (
-                <SaveForm
-                  action={upsertPlayerStat}
-                  successText={editingLine ? "Stat line saved" : "Stat line added"}
-                  className="space-y-4"
-                >
-                  <input type="hidden" name="seasonId" value={seasonId} />
-                  <input type="hidden" name="gameId" value={gid} />
-                  <input type="hidden" name="mode" value="edit" />
-                  <div className="flex items-center gap-3">
-                    <label htmlFor="playerId" className="text-sm font-medium">
-                      Player
-                    </label>
-                    {editingLine ? (
-                      <>
-                        <input type="hidden" name="playerId" value={editingLine.playerId} />
-                        <span className="font-medium">
-                          {editingLine.player.name}{" "}
-                          <span className="text-muted-foreground">
-                            {positionByPlayer.get(editingLine.playerId) ?? ""}
-                          </span>
-                        </span>
-                        <Link
-                          href={`${basePath}?mode=edit`}
-                          className="text-sm text-muted-foreground hover:text-foreground"
-                        >
-                          Cancel edit
-                        </Link>
-                      </>
-                    ) : (
-                      <select
-                        id="playerId"
-                        name="playerId"
-                        defaultValue={availableRoster[0]?.playerId ?? ""}
-                        className={selectClass}
-                        required
-                      >
-                        {availableRoster.map((e) => (
-                          <option key={e.playerId} value={e.playerId}>
-                            {e.player.name} ({e.position})
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                  <StatFieldGroups
-                    groups={PLAYER_STAT_GROUPS}
-                    values={editingLine ?? undefined}
-                    idPrefix="player"
-                    pcts={PLAYER_PCTS}
-                  />
-                  <Button type="submit">
-                    {editingLine ? "Save changes" : "Add stat line"}
-                  </Button>
-                </SaveForm>
-              )}
-            </CardContent>
-          </Card>
 
           {/* ---- Generate a recap ---- */}
           <Card>

@@ -17,6 +17,8 @@ import { updatePlayerProfile, addNotorietyEvent, deleteNotorietyEvent } from "./
 import { PlayerStats, type SeasonStat } from "@/components/player-stats";
 import { MediaList } from "@/components/media/media-list";
 import { fetchMediaPage } from "@/lib/media/query";
+import { SocialFeed } from "@/components/media/social-feed";
+import { fetchSocialFeed } from "@/lib/media/social-feed";
 import { MediaTriggerFields } from "@/components/media/media-trigger-fields";
 import { SaveForm } from "@/components/save-form";
 import { ResultBadge } from "@/components/result-badge";
@@ -82,6 +84,7 @@ export default async function PlayerDetailPage({
   // Recent articles about this player — as the primary subject OR tagged into a
   // multi-player piece. Paginated (latest first).
   const newsPage = await fetchMediaPage({ kind: "player", playerId }, 10, null);
+  const socialPosts = await fetchSocialFeed({ playerId, limit: 6, readyOnly: true });
   const personas = await db.authorPersona.findMany({
     where: { active: true },
     orderBy: { name: "asc" },
@@ -155,15 +158,23 @@ export default async function PlayerDetailPage({
         >
           ← Players
         </Link>
-        {isEdit ? (
-          <Link href={basePath} className={buttonVariants({ variant: "outline", size: "sm" })}>
-            Done
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/players/reconcile?player=${playerId}`}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            Reconcile stats
           </Link>
-        ) : (
-          <Link href={`${basePath}?mode=edit`} className={buttonVariants({ size: "sm" })}>
-            Edit profile
-          </Link>
-        )}
+          {isEdit ? (
+            <Link href={basePath} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Done
+            </Link>
+          ) : (
+            <Link href={`${basePath}?mode=edit`} className={buttonVariants({ size: "sm" })}>
+              Edit profile
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* ESPN-style identity header */}
@@ -335,6 +346,14 @@ export default async function PlayerDetailPage({
           emptyText="No articles about this player yet."
         />
       </section>
+
+      {/* Recent social media posts about this player (embedded feed) */}
+      {socialPosts.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="eyebrow !text-foreground">Recent Social Media Posts</h2>
+          <SocialFeed posts={socialPosts} scroll />
+        </section>
+      )}
         </>
       )}
 

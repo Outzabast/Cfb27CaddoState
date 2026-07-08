@@ -42,7 +42,7 @@ function Reply({ r }: { r: FeedReply }) {
   );
 }
 
-function PostCard({ post }: { post: SocialPost }) {
+export function SocialPostCard({ post }: { post: SocialPost }) {
   return (
     <article className="rounded-md border bg-card p-4">
       <div className="flex gap-3">
@@ -120,8 +120,9 @@ function PostCard({ post }: { post: SocialPost }) {
   );
 }
 
-/** The X-style feed of social posts (XPOST media) with hashtags + reply threads. */
-export function SocialFeed({ posts }: { posts: SocialPost[] }) {
+/** The X-style feed of social posts (XPOST media) with hashtags + reply threads.
+ *  `scroll` caps the height and scrolls internally (for embeds on other pages). */
+export function SocialFeed({ posts, scroll = false }: { posts: SocialPost[]; scroll?: boolean }) {
   if (posts.length === 0) {
     return (
       <div className="rounded-md border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
@@ -130,11 +131,15 @@ export function SocialFeed({ posts }: { posts: SocialPost[] }) {
       </div>
     );
   }
-  return (
+  const list = (
     <div className="space-y-3">
       {posts.map((p) => (
-        <PostCard key={p.id} post={p} />
+        <SocialPostCard key={p.id} post={p} />
       ))}
     </div>
+  );
+  if (!scroll) return list;
+  return (
+    <div className="max-h-[34rem] overflow-y-auto rounded-md border bg-muted/20 p-2">{list}</div>
   );
 }

@@ -9,6 +9,7 @@ import { postMediaEvent, processMediaEvent, readIdList } from "@/lib/media/media
 import { MEDIA_TYPES } from "@/lib/media/constants";
 import { angleBySlug } from "@/lib/media/angles";
 import { fetchMediaPage, type MediaPage, type MediaQuery } from "@/lib/media/query";
+import { fetchSocialFeedPage, type SocialFeedPage, type SocialFeedScope } from "@/lib/media/social-feed";
 import type { MediaType } from "@/generated/prisma/enums";
 
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
@@ -20,6 +21,15 @@ export async function loadMediaPage(
   pageSize: number,
 ): Promise<MediaPage> {
   return fetchMediaPage(query, pageSize, cursor);
+}
+
+/** Fetch the next page of the social feed (cursor-based). Used by "Load more". */
+export async function loadSocialFeed(
+  scope: SocialFeedScope,
+  cursor: number | null,
+  pageSize: number,
+): Promise<SocialFeedPage> {
+  return fetchSocialFeedPage(scope, pageSize, cursor);
 }
 
 /** Mark a piece as read (clears its unviewed badge in the inbox). */

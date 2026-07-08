@@ -30,12 +30,20 @@ export default async function PlayersPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
-        <p className="text-sm text-muted-foreground">
-          Filter by name, position, or season, then open a player for season &
-          career stats.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
+          <p className="text-sm text-muted-foreground">
+            Filter by name, position, or season, then open a player for season &
+            career stats.
+          </p>
+        </div>
+        <Link
+          href="/players/reconcile"
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          Reconcile stat lines
+        </Link>
       </div>
 
       <form method="get" className="flex flex-wrap items-end gap-3">

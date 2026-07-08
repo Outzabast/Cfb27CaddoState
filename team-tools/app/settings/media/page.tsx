@@ -14,6 +14,7 @@ import {
   DEFAULT_TTS_VOICE,
 } from "@/lib/media/constants";
 import { fetchOpenRouterModels, type OpenRouterModel } from "@/lib/media/models";
+import { PersonaModelSelect } from "@/components/media/persona-model-select";
 import { createPersona, updatePersona, deletePersona } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,8 @@ export default async function MediaSettingsPage() {
   } catch (e) {
     modelsError = e instanceof Error ? e.message : "Couldn't load the model list.";
   }
+  // Text (chat) models are what a persona can pin; audio models are separate.
+  const textModels = models.filter((m) => !m.audioOutput);
 
   return (
     <div className="space-y-10">
@@ -116,6 +119,10 @@ export default async function MediaSettingsPage() {
                     ))}
                   </select>
                 </div>
+                <div className="grid gap-2">
+                  <Label>Text model</Label>
+                  <PersonaModelSelect models={textModels} defaultValue={p.modelId ?? ""} />
+                </div>
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2 text-sm text-muted-foreground">
                     <input type="checkbox" name="active" defaultChecked={p.active} /> Active
@@ -164,6 +171,10 @@ export default async function MediaSettingsPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Text model</Label>
+              <PersonaModelSelect models={textModels} />
             </div>
             <Button type="submit" size="sm">Add persona</Button>
           </SaveForm>
