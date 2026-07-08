@@ -18,6 +18,7 @@ export type SocialPost = {
   authorHandle: string;
   isTeamAccount: boolean;
   status: "PENDING" | "GENERATING" | "READY" | "FAILED";
+  genError: string | null;
   body: string | null;
   createdAt: string;
   seasonId: number | null;
@@ -57,6 +58,7 @@ export async function fetchSocialFeed(limit = 40): Promise<SocialPost[]> {
       id: true,
       body: true,
       status: true,
+      genError: true,
       createdAt: true,
       seasonId: true,
       authorPersona: { select: { name: true } },
@@ -89,6 +91,7 @@ export async function fetchSocialFeed(limit = 40): Promise<SocialPost[]> {
       authorHandle: handleFor(authorName),
       isTeamAccount: m.authorPersona == null,
       status: m.status,
+      genError: m.genError,
       body: m.body,
       createdAt: dateFmt.format(m.createdAt),
       seasonId: m.seasonId,

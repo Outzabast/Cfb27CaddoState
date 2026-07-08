@@ -162,6 +162,79 @@ function normalizePlayerStats(raw: unknown): OcrPlayerStatLine[] {
   return out;
 }
 
+/**
+ * Merge normalized results from multiple OCR batches (each batch = its own model
+ * request over ≤8 images) into one, so a big import can be split across calls for
+ * cleaner extraction and reassembled at presentation time. Rows dedupe by
+ * identity; stat maps union (first non-empty wins); player categories merge onto
+ * one line by name — the same merge the review dialog does across screenshots.
+ */
+export function mergeOcrResults(parts: OcrResult[]): OcrResult {
+  const first = parts[0];
+  if (parts.length === 1) return first;
+
+  switch (first.kind) {
+    case "roster": {
+      const rows: OcrRosterRow[] = [];
+      const seen = new Set<string>();
+      for (const p of parts as Extract<OcrResult, { kind: "roster" }>[]) {
+        for (const r of p.rows) {
+          const key = r.name.trim().toLowerCase();
+          if (key && seen.has(key)) continue;
+          if (key) seen.add(key);
+          rows.push(r);
+        }
+      }
+      return { kind: "roster", rows };
+    }
+    case "schedule": {
+      const rows: OcrScheduleRow[] = [];
+      const seen = new Set<string>();
+      for (const p of parts as Extract<OcrResult, { kind: "schedule" }>[]) {
+        for (const r of p.rows) {
+          const key = r.week != null ? `w${r.week}` : `o${r.opponent.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          rows.push(r);
+        }
+      }
+      return { kind: "schedule", rows };
+    }
+    case "teamStats": {
+      const stats: Record<string, number> = {};
+      const oppStats: Record<string, number> = {};
+      let scoreboard: OcrScoreboard | null = null;
+      for (const p of parts as Extract<OcrResult, { kind: "teamStats" }>[]) {
+        for (const [k, v] of Object.entries(p.stats)) if (!(k in stats)) stats[k] = v;
+        for (const [k, v] of Object.entries(p.oppStats)) if (!(k in oppStats)) oppStats[k] = v;
+        if (p.scoreboard) scoreboard = { ...(scoreboard ?? {}), ...p.scoreboard };
+      }
+      return { kind: "teamStats", stats, oppStats, scoreboard };
+    }
+    case "playerStats": {
+      const byKey = new Map<string, OcrPlayerStatLine>();
+      const order: string[] = [];
+      let unnamed = 0;
+      for (const p of parts as Extract<OcrResult, { kind: "playerStats" }>[]) {
+        for (const l of p.lines) {
+          const name = l.playerName.trim();
+          const key = name ? name.toLowerCase() : `__unnamed_${unnamed++}`;
+          const ex = byKey.get(key);
+          if (ex) {
+            ex.stats = { ...ex.stats, ...l.stats };
+            if (l.playerName.length > ex.playerName.length) ex.playerName = l.playerName;
+            if (!ex.position && l.position) ex.position = l.position;
+          } else {
+            byKey.set(key, { ...l, stats: { ...l.stats } });
+            order.push(key);
+          }
+        }
+      }
+      return { kind: "playerStats", lines: order.map((k) => byKey.get(k)!) };
+    }
+  }
+}
+
 /** Turn the raw model JSON into the normalized, app-typed result for a kind. */
 export function normalizeResult(kind: OcrKind, raw: unknown): OcrResult {
   switch (kind) {

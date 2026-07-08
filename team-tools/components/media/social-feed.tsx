@@ -1,7 +1,8 @@
-import { Heart, MessageCircle, Repeat2, BadgeCheck, Trash2 } from "lucide-react";
+import { Heart, MessageCircle, Repeat2, BadgeCheck, Trash2, RotateCw } from "lucide-react";
 import { SaveForm } from "@/components/save-form";
 import { ConfirmSubmit } from "@/components/media/confirm-submit";
-import { deleteMedia } from "@/app/media/actions";
+import { Button } from "@/components/ui/button";
+import { deleteMedia, regenerateMedia } from "@/app/media/actions";
 import { MEDIA_STATUS_LABELS } from "@/lib/media/constants";
 import type { SocialPost, FeedReply } from "@/lib/media/social-feed";
 
@@ -67,9 +68,20 @@ function PostCard({ post }: { post: SocialPost }) {
             </span>
           </div>
 
-          {post.status !== "READY" ? (
+          {post.status === "FAILED" ? (
+            <div className="mt-1 space-y-2">
+              <p className="text-sm italic text-red-700">{post.genError ?? "Failed to post."}</p>
+              <SaveForm action={regenerateMedia} successText="Re-queued">
+                <input type="hidden" name="id" value={post.id} />
+                <Button type="submit" variant="outline" size="sm">
+                  <RotateCw className="h-3.5 w-3.5" />
+                  Retry
+                </Button>
+              </SaveForm>
+            </div>
+          ) : post.status !== "READY" ? (
             <p className="mt-1 text-sm italic text-muted-foreground">
-              {post.status === "FAILED" ? "Failed to post." : `${MEDIA_STATUS_LABELS[post.status]}`}
+              {MEDIA_STATUS_LABELS[post.status]}
             </p>
           ) : (
             <>

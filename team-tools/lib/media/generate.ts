@@ -36,8 +36,9 @@ const SYSTEM_PREFACE =
   "a template. Write ONLY from real data the tools and prompt provide — never invent " +
   "scores, names, or stats, and never contradict the box score. Use the editor's " +
   "extra context for color. When done researching, reply with ONLY a JSON object: " +
-  '{"headline": string, "body": string}. The body is the full article as plain text ' +
-  "with paragraphs separated by blank lines; no markdown headers.";
+  '{"headline": string, "body": string}. The body is the full article in Markdown — ' +
+  "paragraphs separated by blank lines, with light formatting (a bold key phrase, an " +
+  "occasional subheading or bullet list) only where it genuinely aids readability.";
 
 // The writing task per angle. Falls back to a generic line for unknown slugs.
 const ANGLE_INSTRUCTION: Record<string, string> = {

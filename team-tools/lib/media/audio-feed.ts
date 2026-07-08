@@ -8,6 +8,7 @@ export type AudioPost = {
   id: number;
   authorName: string;
   status: "PENDING" | "GENERATING" | "READY" | "FAILED";
+  genError: string | null;
   headline: string | null;
   transcript: string | null;
   seconds: number | null;
@@ -29,6 +30,7 @@ export async function fetchAudioFeed(limit = 40): Promise<AudioPost[]> {
       headline: true,
       body: true,
       status: true,
+      genError: true,
       audioSeconds: true,
       createdAt: true,
       updatedAt: true,
@@ -48,6 +50,7 @@ export async function fetchAudioFeed(limit = 40): Promise<AudioPost[]> {
     id: m.id,
     authorName: m.authorPersona?.name ?? "Caddo State Radio",
     status: m.status,
+    genError: m.genError,
     headline: m.headline,
     transcript: m.body,
     seconds: m.audioSeconds,

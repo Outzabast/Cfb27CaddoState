@@ -202,6 +202,10 @@ export default async function BoxScorePage({
             </CardHeader>
             <CardContent>
               <Scoreboard
+                // Key on the stored score so an OCR import (which refreshes the
+                // router) remounts the component and re-seeds its state instead of
+                // keeping the stale useState value.
+                key={`sb-${game.teamQ1}-${game.teamQ2}-${game.teamQ3}-${game.teamQ4}-${game.teamOt}-${game.oppQ1}-${game.oppQ2}-${game.oppQ3}-${game.oppQ4}-${game.oppOt}`}
                 seasonId={seasonId}
                 gameId={gid}
                 teamName="Caddo State"

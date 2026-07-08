@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { SaveForm } from "@/components/save-form";
 import { MarkViewed } from "@/components/media/mark-viewed";
+import { Markdown } from "@/components/markdown";
 import { ConfirmSubmit } from "@/components/media/confirm-submit";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,7 +77,6 @@ export default async function MediaDetailPage({
     : [];
 
   const ready = media.status === "READY";
-  const paragraphs = (media.body ?? "").split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -168,11 +168,7 @@ export default async function MediaDetailPage({
               )}
             </figure>
           )}
-          <div className="space-y-4 text-[0.95rem] leading-relaxed text-foreground/90">
-            {paragraphs.map((p, i) => (
-              <p key={i} className="whitespace-pre-wrap">{p}</p>
-            ))}
-          </div>
+          <Markdown>{media.body ?? ""}</Markdown>
 
           {related.length > 0 && (
             <section className="space-y-3 border-t pt-5">
