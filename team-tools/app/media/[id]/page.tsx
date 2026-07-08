@@ -150,6 +150,9 @@ export default async function MediaDetailPage({
       {/* Read view: Picture → Headline → Body → See more */}
       {ready && !isEdit && (
         <article className="space-y-5">
+          <h1 className="font-heading text-3xl font-extrabold leading-tight tracking-tight text-foreground">
+            {media.headline}
+          </h1>
           {hasPhoto && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -158,9 +161,6 @@ export default async function MediaDetailPage({
               className="w-full rounded-md border object-cover"
             />
           )}
-          <h1 className="font-heading text-3xl font-extrabold leading-tight tracking-tight text-foreground">
-            {media.headline}
-          </h1>
           <div className="space-y-4 text-[0.95rem] leading-relaxed text-foreground/90">
             {paragraphs.map((p, i) => (
               <p key={i} className="whitespace-pre-wrap">{p}</p>

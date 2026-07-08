@@ -225,6 +225,36 @@ export default async function PlayerDetailPage({
 
       {!isEdit && (
         <>
+      {/* Bio / awards / notable events + notoriety events — above the stats */}
+      {(player.bio || player.awards || player.notableEvents) && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          {player.bio && <InfoBlock title="Bio" text={player.bio} />}
+          {player.awards && <InfoBlock title="Awards" text={player.awards} />}
+          {player.notableEvents && (
+            <InfoBlock title="Notable Events" text={player.notableEvents} />
+          )}
+        </div>
+      )}
+
+      {player.notorietyEvents.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="eyebrow !text-foreground">Notoriety Events</h2>
+          <div className="overflow-hidden rounded-md border bg-card">
+            {player.notorietyEvents.map((e) => (
+              <div
+                key={e.id}
+                className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-0"
+              >
+                <span className="text-sm">{e.description}</span>
+                <span className="shrink-0 rounded-md bg-secondary px-2 py-0.5 text-sm font-bold tabular-nums text-primary">
+                  +{e.points}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Career + season-by-season stat tables */}
       <PlayerStats career={careerValues} seasons={seasons} />
 
@@ -305,37 +335,6 @@ export default async function PlayerDetailPage({
           emptyText="No articles about this player yet."
         />
       </section>
-
-      {/* Bio / awards / notable events (free text) */}
-      {(player.bio || player.awards || player.notableEvents) && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          {player.bio && <InfoBlock title="Bio" text={player.bio} />}
-          {player.awards && <InfoBlock title="Awards" text={player.awards} />}
-          {player.notableEvents && (
-            <InfoBlock title="Notable Events" text={player.notableEvents} />
-          )}
-        </div>
-      )}
-
-      {/* Notoriety events (structured: description + attributed points) */}
-      {player.notorietyEvents.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="eyebrow !text-foreground">Notoriety Events</h2>
-          <div className="overflow-hidden rounded-md border bg-card">
-            {player.notorietyEvents.map((e) => (
-              <div
-                key={e.id}
-                className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-0"
-              >
-                <span className="text-sm">{e.description}</span>
-                <span className="shrink-0 rounded-md bg-secondary px-2 py-0.5 text-sm font-bold tabular-nums text-primary">
-                  +{e.points}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
         </>
       )}
 

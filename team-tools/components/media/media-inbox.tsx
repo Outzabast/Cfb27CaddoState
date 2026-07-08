@@ -339,6 +339,14 @@ export function MediaInbox({
                   onClick={(e) => e.stopPropagation()}
                 />
               )}
+              {m.hasPhoto && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`/media/${m.id}/photo`}
+                  alt=""
+                  className="h-12 w-12 shrink-0 rounded border object-cover"
+                />
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   {!m.viewed && m.status === "READY" && (

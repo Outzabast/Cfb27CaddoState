@@ -127,7 +127,21 @@ export async function fetchMediaPage(
   const hasMore = rows.length > take;
   const page = hasMore ? rows.slice(0, take) : rows;
   const nextCursor = hasMore && page.length ? page[page.length - 1].id : null;
-  return { items: page.map(toItem), nextCursor };
+
+  // Which of these have a header image — a cheap presence check (no bytes loaded).
+  const ids = page.map((r) => r.id);
+  const withPhoto = ids.length
+    ? await db.media.findMany({
+        where: { id: { in: ids }, photo: { not: null } },
+        select: { id: true },
+      })
+    : [];
+  const photoIds = new Set(withPhoto.map((r) => r.id));
+
+  return {
+    items: page.map((r) => ({ ...toItem(r), hasPhoto: photoIds.has(r.id) })),
+    nextCursor,
+  };
 }
 
 /** Count of unread, ready pieces (drives the nav badge). */
