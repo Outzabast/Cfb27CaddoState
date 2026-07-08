@@ -4,6 +4,7 @@
 
 import { runAgent } from "./agent";
 import { parseJsonLoose } from "./openrouter";
+import { TEAM_FACTS } from "./constants";
 
 export type ReplyDraft = {
   /** Persona name (isPersona) or a made-up @handle (fan). */
@@ -29,9 +30,9 @@ export function socialSystem(
 ): string {
   const cast = otherPersonaNames.length ? otherPersonaNames.join(", ") : "(none)";
   return (
-    `You run the X (Twitter) account "${posterName}" covering the Caddo State ` +
-    "Lumberjacks. Refer to the team as Caddo State or the Lumberjacks — never invent " +
-    "a different nickname or city. You have research tools — use them to ground the " +
+    `You run the X (Twitter) account "${posterName}". ` +
+    TEAM_FACTS +
+    " You have research tools — use them to ground the " +
     "post in real players and stats; never invent scores, names, or results.\n\n" +
     `Write ONE short, punchy X-style post (max 280 chars) in this voice:\n${posterVoice}\n\n` +
     "Then write 4–8 replies to it — a realistic, varied mix (hyped, salty, funny, " +

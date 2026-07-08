@@ -5,7 +5,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE, DEFAULT_TTS_VOICE } from "./constants";
+import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE, DEFAULT_TTS_VOICE, TEAM_FACTS } from "./constants";
 import { writeArticle } from "./agent";
 import { writeSocial, socialSystem } from "./social";
 import { synthesizeSpeech } from "./audio";
@@ -27,8 +27,7 @@ async function resolveModel(mediaType: MediaType): Promise<string> {
 }
 
 const SYSTEM_PREFACE =
-  "You cover the Caddo State Lumberjacks. Refer to the team as Caddo State or the " +
-  "Lumberjacks — never invent a different nickname or city. " +
+  TEAM_FACTS + " " +
   "You are a writer for a college-football program's internal media hub. You have " +
   "research tools — use them to build your own picture of whoever and whatever the " +
   "story touches (player dossiers, a player's other games, the roster, prior " +

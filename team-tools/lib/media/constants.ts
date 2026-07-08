@@ -12,6 +12,17 @@ export const AUDIO_VOICES = [
 ] as const;
 export const DEFAULT_TTS_VOICE = "ash";
 
+/**
+ * Ground-truth canon about the program, injected into EVERY generator so the
+ * model never fills gaps with real-world guesses (e.g. hallucinating a nearby
+ * school's stadium). Edit here to add more facts — mascot, city, rivals, etc.
+ */
+export const TEAM_FACTS =
+  "You cover the Caddo State Lumberjacks. Always call the team Caddo State or the " +
+  "Lumberjacks. Team colors are navy and gold. Home games are played at Founders Field. " +
+  "Never invent a different team name, nickname, city, stadium, or colors — if a " +
+  "detail isn't provided, leave it out rather than guess.";
+
 /** Fallback byline voice when no AuthorPersona is chosen/seeded. */
 export const DEFAULT_VOICE =
   "A college-football beat writer covering Caddo State. Writes a tight, " +
