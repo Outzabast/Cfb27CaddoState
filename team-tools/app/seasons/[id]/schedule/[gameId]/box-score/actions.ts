@@ -8,6 +8,7 @@ import { isValidClass } from "@/lib/classes";
 import { attachPlayerToRoster } from "@/lib/player-roster";
 import { postMediaEvent, readIdList } from "@/lib/media/media-space";
 import { recomputeGame, recomputeStaffAll } from "@/lib/notoriety";
+import { recomputeAllSentiment } from "@/lib/sentiment";
 import type { PlayerClass } from "@/generated/prisma/enums";
 import { SCOREBOARD_FIELDS, type OcrScoreboard } from "@/lib/ocr/kinds";
 import {
@@ -65,8 +66,9 @@ export async function updateScoreboard(formData: FormData) {
     },
   });
 
-  // Record + points scored/allowed drive staff notoriety.
+  // Record + points scored/allowed drive staff notoriety and fan sentiment.
   after(() => recomputeStaffAll());
+  after(() => recomputeAllSentiment());
   revalidatePath(path);
   revalidatePath(`/seasons/${seasonId}/schedule`);
 }
@@ -202,6 +204,7 @@ export async function commitOcrBoxScore(
         oppPoints: oppQ1 + oppQ2 + oppQ3 + oppQ4 + oppOt,
       },
     });
+    after(() => recomputeAllSentiment());
     revalidatePath(`/seasons/${seasonId}/schedule`);
   }
 

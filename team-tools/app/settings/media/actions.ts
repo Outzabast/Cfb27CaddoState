@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import type { MediaType } from "@/generated/prisma/enums";
-import { MEDIA_TYPES } from "@/lib/media/constants";
+import { MEDIA_TYPES, AUDIO_VOICES, DEFAULT_TTS_VOICE } from "@/lib/media/constants";
 
 const SETTINGS_PATH = "/settings/media";
 
@@ -11,6 +11,12 @@ function parseMediaType(raw: unknown): MediaType {
   const s = String(raw ?? "");
   if ((MEDIA_TYPES as string[]).includes(s)) return s as MediaType;
   throw new Error("Unknown media type.");
+}
+
+/** Coerce to a known TTS voice (defaults to the standard one). */
+function parseVoice(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  return (AUDIO_VOICES as readonly string[]).includes(s) ? s : DEFAULT_TTS_VOICE;
 }
 
 /** Set which OpenRouter model generates a given media type. */
@@ -35,7 +41,7 @@ export async function createPersona(formData: FormData) {
   if (!name) throw new Error("Give the persona a name.");
   if (!voice) throw new Error("Describe how this author writes.");
 
-  await db.authorPersona.create({ data: { name, voice } });
+  await db.authorPersona.create({ data: { name, voice, ttsVoice: parseVoice(formData.get("ttsVoice")) } });
   revalidatePath(SETTINGS_PATH);
 }
 
@@ -50,7 +56,7 @@ export async function updatePersona(formData: FormData) {
 
   await db.authorPersona.update({
     where: { id },
-    data: { name, voice, active: formData.get("active") != null },
+    data: { name, voice, ttsVoice: parseVoice(formData.get("ttsVoice")), active: formData.get("active") != null },
   });
   revalidatePath(SETTINGS_PATH);
 }

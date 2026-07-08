@@ -14,10 +14,10 @@ const selectClass =
 export default async function PlayersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; pos?: string; season?: string }>;
+  searchParams: Promise<{ q?: string; pos?: string; season?: string; active?: string }>;
 }) {
-  const { q, pos, season } = await searchParams;
-  const filters = { q, pos, season };
+  const { q, pos, season, active } = await searchParams;
+  const filters = { q, pos, season, active };
 
   // Positions/seasons for the filter dropdowns; the list itself is paginated.
   const [positionRows, seasons, total, firstPage] = await Promise.all([
@@ -71,8 +71,17 @@ export default async function PlayersPage({
             ))}
           </select>
         </div>
+        <div className="grid gap-1">
+          <Label htmlFor="active" className="text-xs text-muted-foreground">
+            Status
+          </Label>
+          <select id="active" name="active" defaultValue={active ?? ""} className={selectClass}>
+            <option value="">Active only</option>
+            <option value="0">All (incl. graduated/transferred)</option>
+          </select>
+        </div>
         <Button type="submit">Filter</Button>
-        {(q || pos || season) && (
+        {(q || pos || season || active) && (
           <Link
             href="/players"
             className={buttonVariants({ variant: "ghost", size: "default" })}
@@ -84,7 +93,7 @@ export default async function PlayersPage({
 
       <p className="text-sm text-muted-foreground">
         {total} player{total === 1 ? "" : "s"}
-        {(q || pos || season) ? " match" : ""}
+        {(q || pos || season || active) ? " match" : ""}
       </p>
 
       <PlayerList filters={filters} initialItems={firstPage.items} initialCursor={firstPage.nextCursor} />

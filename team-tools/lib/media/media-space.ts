@@ -99,6 +99,14 @@ export async function processMediaEvent(eventId: number): Promise<void> {
     // One piece per persona (empty personas = a single default-voice piece).
     const personas: (number | null)[] = event.personaIds.length ? event.personaIds : [null];
 
+    // The season a GAME event's game belongs to — so game recaps also tag their
+    // season and surface under it.
+    let gameSeasonId: number | null = null;
+    if (event.scope === "GAME" && event.gameId != null) {
+      const g = await db.game.findUnique({ where: { id: event.gameId }, select: { seasonId: true } });
+      gameSeasonId = g?.seasonId ?? null;
+    }
+
     for (const target of targets) {
       for (const personaId of personas) {
         const media = await db.media.create({
@@ -116,15 +124,23 @@ export async function processMediaEvent(eventId: number): Promise<void> {
           },
           select: { id: true },
         });
-        // For a player piece, tag the extra subject players AND any focus games so
-        // generation writes about all of them / centers on those games.
-        if (isPlayerScope) {
-          const tags = [
-            ...event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })),
-            ...event.gameIds.map((gid) => ({ mediaId: media.id, gameId: gid })),
-          ];
-          if (tags.length) await db.mediaTag.createMany({ data: tags });
+
+        // Subject tags — the anchor this piece is about, plus a game's season, so
+        // the media tab can filter by season/subject and player pages surface it.
+        const tags: { mediaId: number; playerId?: number; gameId?: number; seasonId?: number }[] = [];
+        if (target.playerId != null) tags.push({ mediaId: media.id, playerId: target.playerId });
+        if (target.gameId != null) {
+          tags.push({ mediaId: media.id, gameId: target.gameId });
+          if (gameSeasonId != null) tags.push({ mediaId: media.id, seasonId: gameSeasonId });
         }
+        if (target.seasonId != null) tags.push({ mediaId: media.id, seasonId: target.seasonId });
+        // For a player piece, also tag the extra subject players AND any focus games.
+        if (isPlayerScope) {
+          tags.push(...event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })));
+          tags.push(...event.gameIds.map((gid) => ({ mediaId: media.id, gameId: gid })));
+        }
+        if (tags.length) await db.mediaTag.createMany({ data: tags });
+
         await runGeneration(media.id);
       }
     }

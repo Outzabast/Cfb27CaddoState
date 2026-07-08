@@ -29,9 +29,11 @@ export type StatLineRow = {
   recYds: number;
   tackles: number;
   sacks: number;
+  /** The full recorded line, comma-delimited by category (see formatStatLine). */
+  statLine: string;
 };
 
-type SortKey = "name" | "position" | "passYds" | "rushYds" | "recYds" | "tackles" | "sacks";
+type SortKey = "name" | "position";
 
 export function PlayerStatTable({
   seasonId,
@@ -63,11 +65,11 @@ export function PlayerStatTable({
           (!q || r.name.toLowerCase().includes(q)) &&
           (!posFilter || r.position === posFilter),
       )
-      .sort((a, b) => {
-        if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
-        if (sortKey === "position") return a.position.localeCompare(b.position) * dir;
-        return ((a[sortKey] as number) - (b[sortKey] as number)) * dir;
-      });
+      .sort((a, b) =>
+        sortKey === "position"
+          ? a.position.localeCompare(b.position) * dir
+          : a.name.localeCompare(b.name) * dir,
+      );
   }, [rows, query, posFilter, sortKey, sortAsc]);
 
   function toggleSort(key: SortKey) {
@@ -80,13 +82,8 @@ export function PlayerStatTable({
   const arrow = (key: SortKey) => (sortKey === key ? (sortAsc ? " ▲" : " ▼") : "");
 
   const cols: [SortKey, string, string][] = [
-    ["name", "Player", ""],
+    ["name", "Player", "w-44"],
     ["position", "Pos", "w-16"],
-    ["passYds", "Pass", "text-right"],
-    ["rushYds", "Rush", "text-right"],
-    ["recYds", "Rec", "text-right"],
-    ["tackles", "Tkl", "text-right"],
-    ["sacks", "Sacks", "text-right"],
   ];
 
   return (
@@ -131,37 +128,30 @@ export function PlayerStatTable({
                 </button>
               </TableHead>
             ))}
+            <TableHead>Stat line</TableHead>
             <TableHead className="w-32 text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {visible.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="py-6 text-center text-muted-foreground">
+              <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
                 No stat lines match.
               </TableCell>
             </TableRow>
           ) : (
             visible.map((s) => (
               <TableRow key={s.playerId}>
-                <TableCell className="font-medium">
+                <TableCell className="font-medium align-top">
                   <Link href={`/players/${s.playerId}`} className="hover:underline">
                     {s.name}
                   </Link>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{s.position}</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {s.passAtt ? `${s.passCmp}/${s.passAtt}, ${s.passYds}` : "—"}
+                <TableCell className="text-muted-foreground align-top">{s.position}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {s.statLine || <span className="text-muted-foreground/60">no stats recorded</span>}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {s.rushAtt ? `${s.rushAtt}-${s.rushYds}` : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {s.rec ? `${s.rec}-${s.recYds}` : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">{s.tackles || "—"}</TableCell>
-                <TableCell className="text-right tabular-nums">{s.sacks || "—"}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right align-top">
                   <div className="flex justify-end gap-2">
                     <Link
                       href={`${basePath}?mode=edit&player=${s.playerId}`}

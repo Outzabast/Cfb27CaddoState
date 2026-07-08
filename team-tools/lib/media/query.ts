@@ -92,7 +92,7 @@ export type MediaQuery =
 function whereFor(q: MediaQuery) {
   switch (q.kind) {
     case "unviewed":
-      return { viewed: false, status: "READY" as const };
+      return { mediaType: "ARTICLE" as const, viewed: false, status: "READY" as const };
     case "images":
       // Ready pieces that carry a header image (for the Images gallery).
       return { status: "READY" as const, photo: { not: null } };
@@ -107,7 +107,8 @@ function whereFor(q: MediaQuery) {
       };
     case "all":
     default:
-      return {};
+      // The Articles inbox is articles only; social posts live in their own feed.
+      return { mediaType: "ARTICLE" as const };
   }
 }
 
@@ -153,5 +154,5 @@ export async function fetchMediaPage(
 
 /** Count of unread, ready pieces (drives the nav badge). */
 export async function unviewedCount(): Promise<number> {
-  return db.media.count({ where: { viewed: false, status: "READY" } });
+  return db.media.count({ where: { mediaType: "ARTICLE", viewed: false, status: "READY" } });
 }

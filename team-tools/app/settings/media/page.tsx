@@ -5,7 +5,14 @@ import { ModelPicker } from "@/components/media/model-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MEDIA_TYPES, MEDIA_TYPE_LABELS, DEFAULT_MEDIA_MODEL } from "@/lib/media/constants";
+import {
+  MEDIA_TYPES,
+  MEDIA_TYPE_LABELS,
+  DEFAULT_MEDIA_MODEL,
+  DEFAULT_AUDIO_MODEL,
+  AUDIO_VOICES,
+  DEFAULT_TTS_VOICE,
+} from "@/lib/media/constants";
 import { fetchOpenRouterModels, type OpenRouterModel } from "@/lib/media/models";
 import { createPersona, updatePersona, deletePersona } from "./actions";
 
@@ -13,6 +20,8 @@ export const dynamic = "force-dynamic";
 
 const textareaClass =
   "min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
+const selectClass =
+  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
 export default async function MediaSettingsPage() {
   const [settings, personas] = await Promise.all([
@@ -52,15 +61,20 @@ export default async function MediaSettingsPage() {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
-            {MEDIA_TYPES.map((t) => (
-              <ModelPicker
-                key={t}
-                mediaType={t}
-                label={MEDIA_TYPE_LABELS[t]}
-                current={settingByType.get(t) ?? DEFAULT_MEDIA_MODEL}
-                models={models}
-              />
-            ))}
+            {MEDIA_TYPES.map((t) => {
+              // AUDIO narrates via an audio-output model; the rest use text models.
+              const isAudio = t === "AUDIO";
+              const list = isAudio ? models.filter((m) => m.audioOutput) : models.filter((m) => !m.audioOutput);
+              return (
+                <ModelPicker
+                  key={t}
+                  mediaType={t}
+                  label={MEDIA_TYPE_LABELS[t]}
+                  current={settingByType.get(t) ?? (isAudio ? DEFAULT_AUDIO_MODEL : DEFAULT_MEDIA_MODEL)}
+                  models={list}
+                />
+              );
+            })}
           </div>
         )}
       </section>
@@ -86,6 +100,21 @@ export default async function MediaSettingsPage() {
                     defaultValue={p.voice}
                     className={textareaClass}
                   />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor={`tts-${p.id}`}>Audio voice (radio)</Label>
+                  <select
+                    id={`tts-${p.id}`}
+                    name="ttsVoice"
+                    defaultValue={p.ttsVoice ?? DEFAULT_TTS_VOICE}
+                    className={selectClass}
+                  >
+                    {AUDIO_VOICES.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -125,6 +154,16 @@ export default async function MediaSettingsPage() {
                 placeholder="How does this author write? Tone, focus, quirks…"
                 className={textareaClass}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="new-tts">Audio voice (radio)</Label>
+              <select id="new-tts" name="ttsVoice" defaultValue={DEFAULT_TTS_VOICE} className={selectClass}>
+                {AUDIO_VOICES.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
             </div>
             <Button type="submit" size="sm">Add persona</Button>
           </SaveForm>

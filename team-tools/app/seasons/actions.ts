@@ -1,9 +1,11 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { advanceClass, INACTIVE_CLASSES } from "@/lib/classes";
+import { recomputeAllSentiment } from "@/lib/sentiment";
 
 /** Create a season (and its empty roster) from scratch, e.g. the very first one. */
 export async function createSeason(formData: FormData) {
@@ -21,6 +23,27 @@ export async function createSeason(formData: FormData) {
   await db.season.create({
     data: { name, startYear, endYear, conference, roster: { create: {} } },
   });
+  after(() => recomputeAllSentiment());
+  revalidatePath("/seasons");
+}
+
+/** Set (or clear) a season's manual fan-sentiment baseline override, 0–100. */
+export async function setSentimentBaseline(formData: FormData) {
+  const id = Number(formData.get("seasonId"));
+  if (!Number.isInteger(id)) throw new Error("Bad season id.");
+
+  const raw = String(formData.get("baseline") ?? "").trim();
+  let override: number | null = null;
+  if (raw !== "") {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      throw new Error("Baseline must be a whole number 0–100 (or blank to auto-derive).");
+    }
+    override = n;
+  }
+
+  await db.season.update({ where: { id }, data: { sentimentBaselineOverride: override } });
+  await recomputeAllSentiment();
   revalidatePath("/seasons");
 }
 
@@ -86,6 +109,7 @@ export async function advanceSeason(formData: FormData) {
     return next.id;
   });
 
+  after(() => recomputeAllSentiment());
   revalidatePath("/seasons");
   redirect(`/seasons/${newSeasonId}/roster`);
 }

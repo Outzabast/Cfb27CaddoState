@@ -13,6 +13,8 @@ export type OpenRouterModel = {
   completionPrice: number;
   /** True when this model can take text input (excludes image-only models). */
   textInput: boolean;
+  /** True when this model can output audio (for the AUDIO media type). */
+  audioOutput: boolean;
 };
 
 type RawModel = {
@@ -20,7 +22,7 @@ type RawModel = {
   name?: string;
   context_length?: number;
   pricing?: { prompt?: string; completion?: string };
-  architecture?: { input_modalities?: string[] };
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] };
 };
 
 /**
@@ -56,8 +58,9 @@ export async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
       promptPrice: Number(m.pricing?.prompt ?? 0) || 0,
       completionPrice: Number(m.pricing?.completion ?? 0) || 0,
       textInput: (m.architecture?.input_modalities ?? ["text"]).includes("text"),
+      audioOutput: (m.architecture?.output_modalities ?? []).includes("audio"),
     }))
-    .filter((m) => m.textInput)
+    .filter((m) => m.textInput || m.audioOutput)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

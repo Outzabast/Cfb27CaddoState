@@ -1,8 +1,10 @@
 "use server";
 
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { isValidLocation } from "@/lib/classes";
+import { recomputeAllSentiment } from "@/lib/sentiment";
 import type { GameLocation } from "@/generated/prisma/enums";
 
 function parseOpponent(formData: FormData): string {
@@ -60,6 +62,7 @@ export async function createGame(formData: FormData) {
     },
   });
 
+  after(() => recomputeAllSentiment());
   revalidatePath(`/seasons/${seasonId}/schedule`);
 }
 
@@ -171,6 +174,7 @@ export async function commitOcrGames(seasonId: number, rows: OcrGameInput[]) {
   if (toCreate.length === 0) throw new Error("No new games to import.");
 
   await db.$transaction(toCreate.map((data) => db.game.create({ data })));
+  after(() => recomputeAllSentiment());
   revalidatePath(`/seasons/${seasonId}/schedule`);
 }
 
@@ -180,5 +184,6 @@ export async function deleteGame(formData: FormData) {
   if (![seasonId, gameId].every(Number.isInteger)) throw new Error("Bad ids.");
 
   await db.game.delete({ where: { id: gameId } });
+  after(() => recomputeAllSentiment());
   revalidatePath(`/seasons/${seasonId}/schedule`);
 }

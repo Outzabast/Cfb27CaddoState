@@ -52,10 +52,16 @@ export default function RootLayout({
             </Link>
             <nav className="ml-auto flex items-center gap-1 text-sm">
               <Link
+                href="/seasons/current"
+                className="border-b-2 border-transparent px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:border-[var(--brand-gold)] hover:text-foreground"
+              >
+                Season
+              </Link>
+              <Link
                 href="/seasons"
                 className="border-b-2 border-transparent px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:border-[var(--brand-gold)] hover:text-foreground"
               >
-                Seasons
+                History
               </Link>
               <Link
                 href="/players"

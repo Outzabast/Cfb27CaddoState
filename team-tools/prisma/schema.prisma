@@ -115,6 +115,14 @@ model Season {
   endYear   Int      @map("end_year")
   /// The conference the team played in this season (free text, e.g. "Sun Belt").
   conference String?
+  /// Fan sentiment, 0–100 (0 furious, 50 neutral, 100 elated). Starts from a
+  /// baseline (derived from prior seasons, or `sentimentBaselineOverride` when
+  /// set) and moves with performance vs. expectation. Carries over: a season's
+  /// final sentiment feeds the next season's derived baseline. Drives media tone.
+  fanSentiment              Int  @default(50) @map("fan_sentiment")
+  /// Optional manual override of the derived preseason baseline (0–100). Null =
+  /// use the value derived from recent past performance.
+  sentimentBaselineOverride Int? @map("sentiment_baseline_override")
   createdAt DateTime @default(now()) @map("created_at")
 
   roster SeasonRoster?
@@ -422,6 +430,10 @@ model GameOppStat {
 /// for future clip/highlight types so the Media table doesn't need reshaping.
 enum MediaType {
   ARTICLE
+  /// A short, X-style social post (with hashtags from its tags + persona/fan replies).
+  XPOST
+  /// A radio-style spoken monologue: LLM-written script narrated by an audio model.
+  AUDIO
 
   @@map("media_type")
 }
@@ -468,6 +480,11 @@ model Media {
   body         String?
   photo        Bytes?
   photoCaption String? @map("photo_caption")
+  // AUDIO media: the synthesized WAV bytes + mime + length. body holds the spoken
+  // transcript/script. Served via /media/[id]/audio.
+  audio        Bytes?
+  audioMime    String? @map("audio_mime")
+  audioSeconds Int?    @map("audio_seconds")
 
   // Inbox state: false until you open it, drives the "unviewed" badge on /media.
   viewed Boolean @default(false)
@@ -504,6 +521,7 @@ model Media {
   season        Season?        @relation(fields: [seasonId], references: [id], onDelete: Cascade)
   mediaEvent    MediaEvent?    @relation(fields: [mediaEventId], references: [id], onDelete: Cascade)
   tags          MediaTag[]
+  socialReplies SocialReply[]
 
   @@index([scope])
   @@index([viewed])
@@ -512,6 +530,29 @@ model Media {
   @@index([seasonId])
   @@index([mediaEventId])
   @@map("media")
+}
+
+/// A reply under an X-style social post (XPOST media). From a known AuthorPersona
+/// (authorPersonaId set) or a randomly-generated fan (authorPersonaId null, with a
+/// made-up handle). Deleting the post deletes its replies.
+model SocialReply {
+  id              Int      @id @default(autoincrement())
+  mediaId         Int      @map("media_id")
+  authorPersonaId Int?     @map("author_persona_id")
+  /// Display handle, e.g. "@GridironGusto" (personas get their name as a handle too).
+  handle          String
+  displayName     String?  @map("display_name")
+  body            String
+  likes           Int      @default(0)
+  /// Order within the thread (0 = first reply).
+  sortOrder       Int      @default(0) @map("sort_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  media         Media          @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  authorPersona AuthorPersona? @relation(fields: [authorPersonaId], references: [id], onDelete: SetNull)
+
+  @@index([mediaId])
+  @@map("social_replies")
 }
 
 /// What happened to trigger media generation. Posting a box score is the main
@@ -612,10 +653,14 @@ model AuthorPersona {
   id        Int      @id @default(autoincrement())
   name      String   @unique
   voice     String
+  /// OpenAI TTS voice this persona narrates AUDIO media with (alloy, ash, …). Null
+  /// falls back to the default voice.
+  ttsVoice  String?  @map("tts_voice")
   active    Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
 
-  media Media[]
+  media         Media[]
+  socialReplies SocialReply[]
 
   @@map("author_personas")
 }

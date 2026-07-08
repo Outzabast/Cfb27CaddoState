@@ -5,7 +5,7 @@
 import { db } from "@/lib/db";
 import { CLASS_LABELS } from "@/lib/classes";
 
-export type PlayerFilters = { q?: string; pos?: string; season?: string };
+export type PlayerFilters = { q?: string; pos?: string; season?: string; active?: string };
 export type PlayerListItem = { id: number; name: string; meta: string };
 export type PlayersPage = { items: PlayerListItem[]; nextCursor: number | null };
 
@@ -19,8 +19,11 @@ function whereFor(f: PlayerFilters) {
   const and: Record<string, unknown>[] = [];
   if (f.pos) and.push({ seasonPlayers: { some: { position: f.pos } } });
   if (seasonId) and.push({ seasonPlayers: { some: { seasonRoster: { seasonId } } } });
+  // Active by default: hide graduated/transferred (POSTACTIVE) unless active="0".
+  const activeOnly = f.active !== "0";
   return {
     ...(f.q ? { name: { contains: f.q, mode: "insensitive" as const } } : {}),
+    ...(activeOnly ? { status: { not: "POSTACTIVE" as const } } : {}),
     ...(and.length ? { AND: and } : {}),
   };
 }

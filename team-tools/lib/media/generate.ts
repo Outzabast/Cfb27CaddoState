@@ -5,8 +5,11 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE } from "./constants";
+import { DEFAULT_MEDIA_MODEL, DEFAULT_VOICE, DEFAULT_TTS_VOICE } from "./constants";
 import { writeArticle } from "./agent";
+import { writeSocial, socialSystem } from "./social";
+import { synthesizeSpeech } from "./audio";
+import type { MediaType } from "@/generated/prisma/enums";
 import {
   describeGame,
   describeGamePreview,
@@ -18,7 +21,7 @@ import {
 import { angleBySlug, defaultAngleForScope } from "./angles";
 
 /** Resolve which OpenRouter model writes a given media type. */
-async function resolveModel(mediaType: "ARTICLE"): Promise<string> {
+async function resolveModel(mediaType: MediaType): Promise<string> {
   const setting = await db.modelSetting.findUnique({ where: { mediaType } });
   return setting?.modelId || DEFAULT_MEDIA_MODEL;
 }
@@ -62,10 +65,17 @@ async function buildSeed(
   subject: string,
   subjectPlayerIds: number[],
   focusGameIds: number[],
+  kind: "article" | "social" | "audio" = "article",
 ): Promise<string> {
   const angle = media.angle ?? defaultAngleForScope(media.scope);
   const out: string[] = [];
-  out.push(ANGLE_INSTRUCTION[angle] ?? "Write a news article for Caddo State.");
+  out.push(
+    kind === "social"
+      ? "Write a short X-style social post about the subject below (+ a reply thread)."
+      : kind === "audio"
+        ? "Write a 45–90 second RADIO MONOLOGUE script — spoken word ONLY (no stage directions, no speaker labels, just the words to read aloud) — about the subject below."
+        : ANGLE_INSTRUCTION[angle] ?? "Write a news article for Caddo State.",
+  );
   out.push("");
   out.push("PRIMARY SUBJECT DATA:");
   out.push(subject);
@@ -127,7 +137,13 @@ async function buildSeed(
   }
 
   out.push("");
-  out.push("Research what's useful, then respond with ONLY the JSON article.");
+  out.push(
+    kind === "social"
+      ? "Research what's useful, then respond with ONLY the JSON object described above."
+      : kind === "audio"
+        ? 'Research what\'s useful, then respond with ONLY {"headline": string, "body": string} — body is the spoken script.'
+        : "Research what's useful, then respond with ONLY the JSON article.",
+  );
   return out.join("\n");
 }
 
@@ -180,15 +196,77 @@ export async function runGeneration(mediaId: number): Promise<void> {
 
     const model = await resolveModel(media.mediaType);
     const voice = media.authorPersona?.voice || DEFAULT_VOICE;
-    const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
-    const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds);
 
-    const { headline, body, costUsd } = await writeArticle(model, system, seed);
+    if (media.mediaType === "XPOST") {
+      // Social post: the account's voice + a reply cast of the OTHER active personas.
+      const posterName = media.authorPersona?.name || "Caddo State";
+      const others = await db.authorPersona.findMany({
+        where: { active: true, ...(media.authorPersonaId ? { id: { not: media.authorPersonaId } } : {}) },
+        select: { name: true },
+      });
+      const system = socialSystem(posterName, voice, others.map((o) => o.name));
+      const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds, "social");
 
-    await db.media.update({
-      where: { id: mediaId },
-      data: { headline, body, status: "READY", modelId: model, costUsd, genError: null },
-    });
+      const { post, replies, costUsd } = await writeSocial(model, system, seed);
+
+      await db.media.update({
+        where: { id: mediaId },
+        data: { headline: null, body: post, status: "READY", modelId: model, costUsd, genError: null },
+      });
+
+      // Attribute persona replies by name; the rest are fans (authorPersonaId null).
+      const active = await db.authorPersona.findMany({ where: { active: true }, select: { id: true, name: true } });
+      const byName = new Map(active.map((p) => [p.name.toLowerCase(), p.id]));
+      await db.socialReply.deleteMany({ where: { mediaId } }); // clean slate on regeneration
+      if (replies.length) {
+        await db.socialReply.createMany({
+          data: replies.map((r, i) => ({
+            mediaId,
+            authorPersonaId: r.isPersona ? byName.get(r.author.toLowerCase()) ?? null : null,
+            handle: r.author,
+            displayName: r.displayName,
+            body: r.body,
+            likes: r.likes,
+            sortOrder: i,
+          })),
+        });
+      }
+    } else if (media.mediaType === "AUDIO") {
+      // Two-step: write the monologue SCRIPT with the text model, then narrate it
+      // with the AUDIO model (`model`) + the persona's TTS voice.
+      const scriptModel = await resolveModel("ARTICLE");
+      const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
+      const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds, "audio");
+      const script = await writeArticle(scriptModel, system, seed);
+
+      const ttsVoice = media.authorPersona?.ttsVoice || DEFAULT_TTS_VOICE;
+      const speech = await synthesizeSpeech(model, ttsVoice, script.body);
+
+      await db.media.update({
+        where: { id: mediaId },
+        data: {
+          headline: script.headline,
+          body: speech.transcript || script.body,
+          audio: speech.wav,
+          audioMime: speech.mime,
+          audioSeconds: speech.seconds,
+          status: "READY",
+          modelId: model,
+          costUsd: (script.costUsd ?? 0) + (speech.costUsd ?? 0),
+          genError: null,
+        },
+      });
+    } else {
+      const system = `${SYSTEM_PREFACE}\n\nWrite in this author's voice:\n${voice}`;
+      const seed = await buildSeed(media, subject, subjectPlayerIds, focusGameIds);
+
+      const { headline, body, costUsd } = await writeArticle(model, system, seed);
+
+      await db.media.update({
+        where: { id: mediaId },
+        data: { headline, body, status: "READY", modelId: model, costUsd, genError: null },
+      });
+    }
   } catch (e) {
     await db.media.update({
       where: { id: mediaId },

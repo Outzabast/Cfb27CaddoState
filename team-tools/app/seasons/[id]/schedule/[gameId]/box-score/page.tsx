@@ -7,7 +7,7 @@ import {
   PLAYER_PCTS,
   TEAM_PCTS,
 } from "@/lib/stat-fields";
-import type { BoxLine } from "@/lib/box-score";
+import { formatStatLine, type BoxLine } from "@/lib/box-score";
 import {
   upsertTeamStats,
   upsertOppStats,
@@ -117,6 +117,7 @@ export default async function BoxScorePage({
     recYds: s.recYds,
     tackles: s.tacklesSolo + s.tacklesAst,
     sacks: s.sacks,
+    statLine: formatStatLine(s as unknown as Record<string, number>),
   }));
 
   return (

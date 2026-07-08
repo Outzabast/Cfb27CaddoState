@@ -13,6 +13,12 @@ import { MEDIA_TOOLS, runTool } from "./tools";
 const MAX_STEPS = 6; // research rounds before we force the final answer
 const MAX_TOOL_RESULT = 6000; // chars per tool result fed back to the model
 
+export type AgentResult = {
+  content: string;
+  costUsd: number | null;
+  toolCalls: number;
+};
+
 export type WrittenArticle = {
   headline: string;
   body: string;
@@ -20,37 +26,17 @@ export type WrittenArticle = {
   toolCalls: number;
 };
 
-function finalize(content: string, cost: number, toolCalls: number): WrittenArticle {
-  const parsed = parseJsonLoose(content) as { headline?: unknown; body?: unknown };
-  const headline = String(parsed.headline ?? "").trim();
-  const body = String(parsed.body ?? "").trim();
-  if (!headline || !body) throw new Error("Model response was missing a headline or body.");
-  return { headline, body, costUsd: cost || null, toolCalls };
-}
-
-/** One tool-less call that forces a JSON article (fallback + final safety net). */
-async function oneShotJson(model: string, system: string, seed: string): Promise<WrittenArticle> {
-  const { content, costUsd } = await callOpenRouter(
-    model,
-    [
-      { role: "system", content: system },
-      { role: "user", content: `${seed}\n\nRespond with ONLY the JSON object now.` },
-    ],
-    { jsonResponse: true },
-  );
-  return finalize(content, costUsd ?? 0, 0);
-}
-
 /**
- * Draft an article. The model may call research tools across several rounds; when
- * it stops calling tools it should return the JSON article. Costs accumulate
- * across every round.
+ * The core research loop: the model may call read-only tools across several
+ * rounds, then returns its final text (expected to be a JSON object). Returns the
+ * raw content — callers parse it into their own shape. Falls back to a single
+ * tool-less JSON call if the model can't do tool calls. Costs accumulate.
  */
-export async function writeArticle(
+export async function runAgent(
   model: string,
   system: string,
   seed: string,
-): Promise<WrittenArticle> {
+): Promise<AgentResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: system },
     { role: "user", content: seed },
@@ -64,7 +50,17 @@ export async function writeArticle(
       res = await callOpenRouter(model, messages, { tools: MEDIA_TOOLS });
     } catch (e) {
       // Model likely can't do tool calls — degrade to a plain JSON generation.
-      if (step === 0) return oneShotJson(model, system, seed);
+      if (step === 0) {
+        const one = await callOpenRouter(
+          model,
+          [
+            { role: "system", content: system },
+            { role: "user", content: `${seed}\n\nRespond with ONLY the JSON object now.` },
+          ],
+          { jsonResponse: true },
+        );
+        return { content: one.content, costUsd: one.costUsd, toolCalls: 0 };
+      }
       throw e;
     }
     cost += res.costUsd ?? 0;
@@ -89,8 +85,8 @@ export async function writeArticle(
       continue;
     }
 
-    // No tool calls — this should be the article.
-    if (res.content.trim()) return finalize(res.content, cost, toolCalls);
+    // No tool calls — this should be the final answer.
+    if (res.content.trim()) return { content: res.content, costUsd: cost, toolCalls };
     break;
   }
 
@@ -98,9 +94,25 @@ export async function writeArticle(
   // keeping whatever the model has already gathered in context.
   messages.push({
     role: "user",
-    content: "Stop researching and respond with ONLY the JSON article object now.",
+    content: "Stop researching and respond with ONLY the JSON object now.",
   });
   const finalRes = await callOpenRouter(model, messages, { jsonResponse: true });
   cost += finalRes.costUsd ?? 0;
-  return finalize(finalRes.content, cost, toolCalls);
+  return { content: finalRes.content, costUsd: cost, toolCalls };
+}
+
+/**
+ * Draft an article: run the agent, then parse its JSON {headline, body}.
+ */
+export async function writeArticle(
+  model: string,
+  system: string,
+  seed: string,
+): Promise<WrittenArticle> {
+  const { content, costUsd, toolCalls } = await runAgent(model, system, seed);
+  const parsed = parseJsonLoose(content) as { headline?: unknown; body?: unknown };
+  const headline = String(parsed.headline ?? "").trim();
+  const body = String(parsed.body ?? "").trim();
+  if (!headline || !body) throw new Error("Model response was missing a headline or body.");
+  return { headline, body, costUsd: costUsd || null, toolCalls };
 }

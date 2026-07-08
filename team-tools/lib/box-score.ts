@@ -236,6 +236,84 @@ export const BOX_CATEGORIES: BoxCategory[] = [
   },
 ];
 
+/**
+ * A player's complete recorded line as one readable, comma-delimited string,
+ * grouped by category — e.g. "Passing: 18/34, 246 yds, 2 TD, 1 INT  ·  Rushing:
+ * 12-36, 1 TD". Only categories with something recorded appear; empty → "".
+ * Lets the box-score edit list show every value without opening each line.
+ */
+export function formatStatLine(v: Record<string, number>): string {
+  const n = (k: string) => v[k] ?? 0;
+  const f = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+  const segs: string[] = [];
+
+  if (n("passAtt") > 0) {
+    const p = [`${n("passCmp")}/${n("passAtt")}`, `${n("passYds")} yds`];
+    if (n("passTd")) p.push(`${n("passTd")} TD`);
+    if (n("passInt")) p.push(`${n("passInt")} INT`);
+    if (n("passLong")) p.push(`LNG ${n("passLong")}`);
+    if (n("sacked")) p.push(`${n("sacked")} sacked`);
+    segs.push(`Passing: ${p.join(", ")}`);
+  }
+  if (n("rushAtt") > 0) {
+    // "att-yds" reads cleanly for non-negative yards; spell it out when negative.
+    const rush = n("rushYds") < 0 ? `${n("rushAtt")} for ${n("rushYds")} yds` : `${n("rushAtt")}-${n("rushYds")}`;
+    const p = [rush];
+    if (n("rushTd")) p.push(`${n("rushTd")} TD`);
+    if (n("rushLong")) p.push(`LNG ${n("rushLong")}`);
+    segs.push(`Rushing: ${p.join(", ")}`);
+  }
+  if (n("rec") > 0 || n("targets") > 0) {
+    const p = [`${n("rec")} rec`, `${n("recYds")} yds`];
+    if (n("recTd")) p.push(`${n("recTd")} TD`);
+    if (n("targets")) p.push(`${n("targets")} tgt`);
+    if (n("recLong")) p.push(`LNG ${n("recLong")}`);
+    segs.push(`Receiving: ${p.join(", ")}`);
+  }
+  const tkl = n("tacklesSolo") + n("tacklesAst");
+  const hasDef =
+    tkl > 0 || n("sacks") > 0 || n("tacklesForLoss") > 0 || n("qbHurries") > 0 ||
+    n("defInt") > 0 || n("passesDefended") > 0 || n("forcedFumbles") > 0 ||
+    n("fumblesRec") > 0 || n("defTd") > 0;
+  if (hasDef) {
+    const p: string[] = [];
+    if (tkl) p.push(`${tkl} tkl (${n("tacklesSolo")} solo/${n("tacklesAst")} ast)`);
+    if (n("tacklesForLoss")) p.push(`${f(n("tacklesForLoss"))} TFL`);
+    if (n("sacks")) p.push(`${f(n("sacks"))} sack`);
+    if (n("qbHurries")) p.push(`${n("qbHurries")} QBH`);
+    if (n("defInt")) p.push(`${n("defInt")} INT${n("intYds") ? ` (${n("intYds")} yds)` : ""}`);
+    if (n("passesDefended")) p.push(`${n("passesDefended")} PD`);
+    if (n("forcedFumbles")) p.push(`${n("forcedFumbles")} FF`);
+    if (n("fumblesRec")) p.push(`${n("fumblesRec")} FR`);
+    if (n("defTd")) p.push(`${n("defTd")} def TD`);
+    segs.push(`Defense: ${p.join(", ")}`);
+  }
+  if (n("fgAtt") > 0 || n("xpAtt") > 0) {
+    const p: string[] = [];
+    if (n("fgAtt")) p.push(`${n("fgMade")}/${n("fgAtt")} FG${n("fgLong") ? ` (LNG ${n("fgLong")})` : ""}`);
+    if (n("xpAtt")) p.push(`${n("xpMade")}/${n("xpAtt")} XP`);
+    segs.push(`Kicking: ${p.join(", ")}`);
+  }
+  if (n("punts") > 0) {
+    const p = [`${n("punts")} for ${n("puntYds")} yds`];
+    if (n("puntLong")) p.push(`LNG ${n("puntLong")}`);
+    segs.push(`Punting: ${p.join(", ")}`);
+  }
+  if (n("krRet") > 0 || n("prRet") > 0) {
+    const p: string[] = [];
+    if (n("krRet")) p.push(`${n("krRet")} KR ${n("krYds")} yds${n("krTd") ? `, ${n("krTd")} TD` : ""}`);
+    if (n("prRet")) p.push(`${n("prRet")} PR ${n("prYds")} yds${n("prTd") ? `, ${n("prTd")} TD` : ""}`);
+    segs.push(`Returns: ${p.join(", ")}`);
+  }
+  if (n("fumbles") > 0 || n("fumblesLost") > 0) {
+    const p = [`${n("fumbles")} fum`];
+    if (n("fumblesLost")) p.push(`${n("fumblesLost")} lost`);
+    segs.push(`Fumbles: ${p.join(", ")}`);
+  }
+
+  return segs.join("  ·  ");
+}
+
 export type TeamStatRow = { label: string; value: string | number; sub?: boolean };
 
 /** GameTeamStat fields the team-stats read table needs. */

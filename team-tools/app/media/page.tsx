@@ -7,18 +7,28 @@ import {
   Newspaper,
   MessageSquare,
   Image as ImageIcon,
+  AudioLines,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { MediaInbox } from "@/components/media/media-inbox";
 import { MediaImageGallery } from "@/components/media/media-image-gallery";
+import { SocialFeed } from "@/components/media/social-feed";
+import { AudioFeed } from "@/components/media/audio-feed";
 import { fetchMediaPage, unviewedCount, type MediaQuery } from "@/lib/media/query";
+import { fetchSocialFeed } from "@/lib/media/social-feed";
+import { fetchAudioFeed } from "@/lib/media/audio-feed";
+import { db } from "@/lib/db";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+const selectClass =
+  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
 const SECTIONS = [
   { key: "articles", label: "Articles", Icon: Newspaper },
   { key: "social", label: "Social", Icon: MessageSquare },
+  { key: "audio", label: "Audio", Icon: AudioLines },
   { key: "images", label: "Images", Icon: ImageIcon },
 ] as const;
 
@@ -27,7 +37,7 @@ type SectionKey = (typeof SECTIONS)[number]["key"];
 export default async function MediaHubPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; view?: string }>;
+  searchParams: Promise<{ section?: string; view?: string; season?: string }>;
 }) {
   const sp = await searchParams;
   const section: SectionKey =
@@ -41,16 +51,21 @@ export default async function MediaHubPage({
     const page = await fetchMediaPage({ kind: "images" }, 12, null);
     content = <MediaImageGallery initialItems={page.items} initialCursor={page.nextCursor} />;
   } else if (section === "social") {
-    content = (
-      <div className="rounded-md border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
-        Social posts (X-style, with persona replies) will appear here once the X-post
-        media type is built.
-      </div>
-    );
+    content = <SocialFeed posts={await fetchSocialFeed()} />;
+  } else if (section === "audio") {
+    content = <AudioFeed posts={await fetchAudioFeed()} />;
   } else {
-    const query: MediaQuery = unviewedOnly ? { kind: "unviewed" } : { kind: "all" };
-    const page = await fetchMediaPage(query, 10, null);
-    content =
+    const seasonId = sp.season ? Number(sp.season) : NaN;
+    const query: MediaQuery = unviewedOnly
+      ? { kind: "unviewed" }
+      : Number.isInteger(seasonId)
+        ? { kind: "season", seasonId }
+        : { kind: "all" };
+    const [page, seasons] = await Promise.all([
+      fetchMediaPage(query, 10, null),
+      db.season.findMany({ orderBy: { startYear: "desc" }, select: { id: true, name: true } }),
+    ]);
+    const inbox =
       unviewedOnly && page.items.length === 0 ? (
         <div className="rounded-md border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
           You&rsquo;re all caught up — nothing unread.{" "}
@@ -61,6 +76,43 @@ export default async function MediaHubPage({
       ) : (
         <MediaInbox initialItems={page.items} initialCursor={page.nextCursor} query={query} />
       );
+    content = (
+      <div className="space-y-4">
+        {!unviewedOnly && (
+          <form method="get" className="flex flex-wrap items-end gap-2">
+            <input type="hidden" name="section" value="articles" />
+            <div className="grid gap-1">
+              <label htmlFor="season" className="text-xs text-muted-foreground">
+                Season
+              </label>
+              <select id="season" name="season" defaultValue={sp.season ?? ""} className={selectClass}>
+                <option value="">All seasons</option>
+                {seasons.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="submit"
+              className="h-9 rounded-md border px-3 text-sm font-medium hover:bg-accent"
+            >
+              Filter
+            </button>
+            {sp.season && (
+              <Link
+                href="/media?section=articles"
+                className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </Link>
+            )}
+          </form>
+        )}
+        {inbox}
+      </div>
+    );
   }
 
   return (
