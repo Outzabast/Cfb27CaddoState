@@ -53,6 +53,7 @@ export default async function SchedulePage({
     teamPoints: g.teamPoints,
     oppPoints: g.oppPoints,
     isConference: g.isConference,
+    note: g.note,
   }));
 
   return (
@@ -136,6 +137,9 @@ export default async function SchedulePage({
               <input type="checkbox" name="isConference" />
               Conference
             </label>
+            <Field label="Note (optional)" className="w-64">
+              <Input name="note" placeholder="e.g. CUSA title game, bowl game" />
+            </Field>
             <Button type="submit">Add game</Button>
           </SaveForm>
         </CardContent>

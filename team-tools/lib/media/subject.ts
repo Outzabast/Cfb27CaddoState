@@ -89,6 +89,7 @@ export async function describeGame(gameId: number): Promise<string> {
   out.push(
     `Final: Caddo State ${game.teamPoints}, ${game.opponent} ${game.oppPoints} (Caddo State ${res})`,
   );
+  if (game.note) out.push(`Billing / stakes: ${game.note}`);
   out.push(
     `By quarter — Caddo State: ${game.teamQ1}/${game.teamQ2}/${game.teamQ3}/${game.teamQ4}` +
       (game.teamOt ? ` (OT ${game.teamOt})` : "") +
@@ -286,6 +287,7 @@ export async function describeGamePreview(gameId: number): Promise<string> {
       (game.date ? `, ${game.date.toISOString().slice(0, 10)}` : ""),
   );
   out.push("This game has NOT been played yet — do not invent a score, stats, or result.");
+  if (game.note) out.push(`Billing / stakes: ${game.note}`);
   out.push(`Caddo State record entering: ${formatRecord(rec)}`);
 
   const played = game.season.games

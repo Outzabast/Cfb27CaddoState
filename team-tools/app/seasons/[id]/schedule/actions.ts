@@ -27,6 +27,11 @@ function parseOptionalInt(formData: FormData, key: string): number | null {
   return n;
 }
 
+/** Optional short billing/description for the game (null when blank). */
+function parseNote(formData: FormData): string | null {
+  return String(formData.get("note") ?? "").trim() || null;
+}
+
 /** Week is optional but, when set, must be 0-20. */
 function parseWeek(formData: FormData): number | null {
   const week = parseOptionalInt(formData, "week");
@@ -57,6 +62,7 @@ export async function createGame(formData: FormData) {
       opponent: parseOpponent(formData),
       location: parseLocation(formData),
       isConference: formData.get("isConference") != null,
+      note: parseNote(formData),
       teamPoints: parseOptionalInt(formData, "teamPoints") ?? 0,
       oppPoints: parseOptionalInt(formData, "oppPoints") ?? 0,
     },
@@ -85,6 +91,7 @@ export async function updateGame(formData: FormData) {
       opponent: parseOpponent(formData),
       location: parseLocation(formData),
       isConference: formData.get("isConference") != null,
+      note: parseNote(formData),
     },
   });
 

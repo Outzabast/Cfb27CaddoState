@@ -365,6 +365,9 @@ model Game {
   location   GameLocation @default(HOME)
   /// Whether this is a conference game (feeds the conference W-L record).
   isConference Boolean    @default(false) @map("is_conference")
+  /// Optional short billing for the game — "CUSA title game", "bowl: Frisco Bowl",
+  /// "rivalry week". Shown on the schedule and fed to media for richer coverage.
+  note       String?
   // Final score (kept as the source of truth for W/L + season aggregation). When
   // quarter scores are entered, these are set to the sum of the quarters + OT.
   teamPoints Int          @default(0) @map("team_points")

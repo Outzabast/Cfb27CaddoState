@@ -95,16 +95,25 @@ export async function regenerateMedia(formData: FormData) {
   revalidatePath("/media");
 }
 
+/** A positive season id from the form, or null when absent/blank (Number(null) is
+ *  0, which is a valid integer — hence the explicit presence + >0 check). */
+function optSeasonId(formData: FormData): number | null {
+  const raw = formData.get("seasonId");
+  if (raw == null || String(raw).trim() === "") return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Delete one piece. Redirects back to the inbox afterward. */
 export async function deleteMedia(formData: FormData) {
   const id = Number(formData.get("id"));
   if (!Number.isInteger(id)) throw new Error("Bad media id.");
-  const seasonId = Number(formData.get("seasonId"));
+  const seasonId = optSeasonId(formData);
 
   await db.media.delete({ where: { id } });
 
   revalidatePath("/media");
-  if (Number.isInteger(seasonId)) {
+  if (seasonId != null) {
     revalidatePath(`/seasons/${seasonId}/media`);
     redirect(`/seasons/${seasonId}/media`);
   }
@@ -125,8 +134,8 @@ export async function bulkDeleteMedia(formData: FormData) {
   await db.media.deleteMany({ where: { id: { in: ids } } });
 
   revalidatePath("/media");
-  const seasonId = Number(formData.get("seasonId"));
-  if (Number.isInteger(seasonId)) revalidatePath(`/seasons/${seasonId}/media`);
+  const seasonId = optSeasonId(formData);
+  if (seasonId != null) revalidatePath(`/seasons/${seasonId}/media`);
 }
 
 /**

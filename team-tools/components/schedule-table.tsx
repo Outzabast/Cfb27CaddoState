@@ -28,6 +28,7 @@ export type GameRow = {
   teamPoints: number;
   oppPoints: number;
   isConference: boolean;
+  note: string | null;
 };
 
 type SortKey = "week" | "date" | "opponent" | "location";
@@ -125,6 +126,9 @@ export function ScheduleTable({
                       Conf
                     </Badge>
                   )}
+                  {g.note && (
+                    <span className="block text-xs font-normal text-muted-foreground">{g.note}</span>
+                  )}
                 </TableCell>
                 <TableCell>{LOCATION_LABELS[g.location]}</TableCell>
                 <TableCell className="text-right tabular-nums">
@@ -213,6 +217,13 @@ export function ScheduleTable({
                         />
                         Conference game
                       </label>
+                      <LabeledField label="Note" className="w-64">
+                        <Input
+                          name="note"
+                          defaultValue={g.note ?? ""}
+                          placeholder="e.g. CUSA title game, bowl game"
+                        />
+                      </LabeledField>
                       <Button type="submit" size="sm">
                         Save
                       </Button>
