@@ -48,6 +48,7 @@ export default async function BoxScorePage({
       teamStats: true,
       oppStats: true,
       playerStats: { include: { player: true } },
+      scoringPlays: { orderBy: { sortOrder: "asc" } },
     },
   });
   if (!game || game.seasonId !== seasonId) notFound();
@@ -165,6 +166,39 @@ export default async function BoxScorePage({
                 <span className="tabular-nums font-bold text-primary">{s.gameNotoriety}</span>
               </Link>
             ))}
+          </div>
+        </section>
+      )}
+
+      {game.scoringPlays.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="eyebrow !text-foreground">Scoring Summary</h2>
+          <div className="overflow-hidden rounded-md border">
+            {[1, 2, 3, 4, 5].map((q) => {
+              const plays = game.scoringPlays.filter((p) => (q < 5 ? p.quarter === q : p.quarter >= 5));
+              if (plays.length === 0) return null;
+              return (
+                <div key={q}>
+                  <div className="bg-muted/50 px-4 py-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                    {q < 5 ? `${q}${q === 1 ? "st" : q === 2 ? "nd" : q === 3 ? "rd" : "th"} Quarter` : "Overtime"}
+                  </div>
+                  {plays.map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 border-t px-4 py-2 text-sm first:border-t-0">
+                      <span
+                        className={
+                          "w-12 shrink-0 text-xs font-bold uppercase " +
+                          (p.team === "TEAM" ? "text-primary" : "text-muted-foreground")
+                        }
+                      >
+                        {p.team === "TEAM" ? "CSU" : "OPP"}
+                      </span>
+                      <span className="flex-1">{p.description}</span>
+                      {p.clock && <span className="tabular-nums text-xs text-muted-foreground">{p.clock}</span>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

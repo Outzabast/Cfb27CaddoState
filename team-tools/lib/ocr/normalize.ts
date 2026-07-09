@@ -12,6 +12,7 @@ import {
   type OcrRosterRow,
   type OcrScheduleRow,
   type OcrPlayerStatLine,
+  type OcrScoringPlay,
   type OcrScoreboard,
 } from "./kinds";
 
@@ -162,6 +163,31 @@ function normalizePlayerStats(raw: unknown): OcrPlayerStatLine[] {
   return out;
 }
 
+const CLOCK_RE = /^\d{1,2}:\d{2}$/;
+
+function normalizeScoringPlays(raw: unknown): OcrScoringPlay[] {
+  const plays = asArray((raw as { plays?: unknown })?.plays);
+  const out: OcrScoringPlay[] = [];
+  for (const p of plays) {
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    const description = cleanString(o.description).replace(/^\((?:[A-Z]{2,5})\)\s*/, "").trim();
+    if (!description) continue;
+    let quarter = toIntOrNull(o.quarter);
+    if (quarter !== null && (quarter < 1 || quarter > 10)) quarter = null;
+    const clockStr = cleanString(o.clock);
+    const points = toIntOrNull(o.points);
+    out.push({
+      quarter,
+      team: String(o.team ?? "").toLowerCase() === "opp" ? "opp" : "team",
+      clock: CLOCK_RE.test(clockStr) ? clockStr : null,
+      description,
+      points: points !== null && points >= 0 ? points : null,
+    });
+  }
+  return out;
+}
+
 /**
  * Merge normalized results from multiple OCR batches (each batch = its own model
  * request over ≤8 images) into one, so a big import can be split across calls for
@@ -232,6 +258,21 @@ export function mergeOcrResults(parts: OcrResult[]): OcrResult {
       }
       return { kind: "playerStats", lines: order.map((k) => byKey.get(k)!) };
     }
+    case "scoringSummary": {
+      const plays: OcrScoringPlay[] = [];
+      const seen = new Set<string>();
+      let scoreboard: OcrScoreboard | null = null;
+      for (const p of parts as Extract<OcrResult, { kind: "scoringSummary" }>[]) {
+        for (const play of p.plays) {
+          const key = `${play.quarter}|${play.clock}|${play.description.toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          plays.push(play);
+        }
+        if (p.scoreboard) scoreboard = { ...(scoreboard ?? {}), ...p.scoreboard };
+      }
+      return { kind: "scoringSummary", plays, scoreboard };
+    }
   }
 }
 
@@ -251,5 +292,11 @@ export function normalizeResult(kind: OcrKind, raw: unknown): OcrResult {
       };
     case "playerStats":
       return { kind, lines: normalizePlayerStats(raw) };
+    case "scoringSummary":
+      return {
+        kind,
+        plays: normalizeScoringPlays(raw),
+        scoreboard: normalizeScoreboard((raw as { scoreboard?: unknown })?.scoreboard),
+      };
   }
 }

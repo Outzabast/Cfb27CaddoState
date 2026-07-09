@@ -70,6 +70,12 @@ export default function RootLayout({
                 Players
               </Link>
               <Link
+                href="/recruits"
+                className="border-b-2 border-transparent px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:border-[var(--brand-gold)] hover:text-foreground"
+              >
+                Recruits
+              </Link>
+              <Link
                 href="/media"
                 className="border-b-2 border-transparent px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:border-[var(--brand-gold)] hover:text-foreground"
               >

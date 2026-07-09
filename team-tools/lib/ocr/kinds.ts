@@ -1,7 +1,7 @@
 import type { PlayerClass, GameLocation } from "@/generated/prisma/enums";
 
 /** The screens we can OCR-import from. */
-export const OCR_KINDS = ["roster", "schedule", "teamStats", "playerStats"] as const;
+export const OCR_KINDS = ["roster", "schedule", "teamStats", "playerStats", "scoringSummary"] as const;
 export type OcrKind = (typeof OCR_KINDS)[number];
 
 export function isOcrKind(v: unknown): v is OcrKind {
@@ -57,6 +57,19 @@ export type OcrPlayerStatLine = {
 };
 
 /**
+ * One entry read off a box score's scoring summary. "team" = Caddo State (the
+ * "(CSU)" tag), "opp" = anyone else. `description` is the play text with the team
+ * tag stripped; `points` is the model's best inference of the play's value.
+ */
+export type OcrScoringPlay = {
+  quarter: number | null;
+  team: "team" | "opp";
+  clock: string | null;
+  description: string;
+  points: number | null;
+};
+
+/**
  * The normalized result the /api/ocr route returns for each kind. This is what
  * the staging dialogs render for the user to edit before importing.
  */
@@ -69,7 +82,8 @@ export type OcrResult =
       oppStats: Record<string, number>;
       scoreboard: OcrScoreboard | null;
     }
-  | { kind: "playerStats"; lines: OcrPlayerStatLine[] };
+  | { kind: "playerStats"; lines: OcrPlayerStatLine[] }
+  | { kind: "scoringSummary"; plays: OcrScoringPlay[]; scoreboard: OcrScoreboard | null };
 
 export type OcrResponse =
   | { ok: true; result: OcrResult }

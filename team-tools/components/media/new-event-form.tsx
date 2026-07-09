@@ -13,6 +13,7 @@ import { MEDIA_ANGLES, angleBySlug } from "@/lib/media/angles";
 
 export type GameOption = { id: number; label: string; played: boolean };
 export type SeasonOption = { id: number; name: string };
+export type RecruitOption = { id: number; label: string };
 
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
@@ -25,11 +26,13 @@ export function NewEventForm({
   games,
   seasons,
   players,
+  recruits,
   personas,
 }: {
   games: GameOption[];
   seasons: SeasonOption[];
   players: PlayerOption[];
+  recruits: RecruitOption[];
   personas: PersonaOption[];
 }) {
   const [angle, setAngle] = useState(MEDIA_ANGLES[0].slug);
@@ -90,6 +93,23 @@ export function NewEventForm({
             ))}
           </select>
         </div>
+      ) : meta.subject === "recruit" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="subjectId">Recruit</Label>
+          {recruits.length ? (
+            <select id="subjectId" name="subjectId" className={selectClass}>
+              {recruits.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No recruits yet — add one on the Recruits page first.
+            </p>
+          )}
+        </div>
       ) : (
         // gamePlayed (recap) or gameUpcoming (preview)
         <div className="grid gap-2">
@@ -119,7 +139,7 @@ export function NewEventForm({
       </div>
 
       {/* GAME/TEAM angles can also spin off separate player features */}
-      {meta.subject !== "players" && (
+      {(meta.scope === "GAME" || meta.scope === "TEAM") && (
         <PlayerMultiSelect
           players={players}
           name="mediaPlayerId"

@@ -16,9 +16,12 @@ import {
   describeInjuryReport,
   describePlayer,
   describePlayers,
+  describeRecruit,
   describeSeason,
 } from "./subject";
 import { angleBySlug, defaultAngleForScope } from "./angles";
+import { assembleFacts } from "./facts";
+import { getCurrentSeasonId } from "@/lib/season";
 
 /** Resolve which OpenRouter model writes a given media type. */
 async function resolveModel(mediaType: MediaType): Promise<string> {
@@ -31,7 +34,8 @@ const SYSTEM_PREFACE =
   "You are a writer for a college-football program's internal media hub. You have " +
   "research tools — use them to build your own picture of whoever and whatever the " +
   "story touches (player dossiers, a player's other games, the roster, prior " +
-  "articles by you or about this subject) so each piece is specific and fresh, not " +
+  "articles by you or about this subject, and extra standing background facts via " +
+  "list_facts) so each piece is specific and fresh, not " +
   "a template. Write ONLY from real data the tools and prompt provide — never invent " +
   "scores, names, or stats, and never contradict the box score. Use the editor's " +
   "extra context for color. When done researching, reply with ONLY a JSON object: " +
@@ -47,14 +51,19 @@ const ANGLE_INSTRUCTION: Record<string, string> = {
   feature: "Write a PLAYER FEATURE.",
   season: "Write a SEASON / TEAM story on the state of the program.",
   injury: "Write an INJURY REPORT on the team's health, grounded in the listed injured players.",
+  recruiting:
+    "Write a RECRUITING PROFILE on this prospect — who they are, their rating/rankings, what they'd bring, and where they stand with Caddo State. If they're a TRANSFER, center it on their previous school, production there, and remaining eligibility. This is a recruit, NOT a current roster player: never invent stats or games they've played FOR US.",
+  departure:
+    "Write a TRANSFER PORTAL DEPARTURE story: this player is leaving Caddo State via the portal. Ground it in what they did here and treat the exit as news — never invent a destination school unless the editor's context provides one.",
 };
 
 type MediaRow = {
-  scope: "PLAYER" | "GAME" | "TEAM";
+  scope: "PLAYER" | "GAME" | "TEAM" | "RECRUIT";
   angle: string | null;
   playerId: number | null;
   gameId: number | null;
   seasonId: number | null;
+  recruitId: number | null;
   promptContext: string | null;
   authorPersonaId: number | null;
 };
@@ -69,6 +78,10 @@ async function buildSeed(
 ): Promise<string> {
   const angle = media.angle ?? defaultAngleForScope(media.scope);
   const out: string[] = [];
+  // The season whose SEASON/ROSTER standing facts apply. Resolved per scope
+  // below (game's season, the article's season, or — for a player piece with no
+  // season anchor — the current one).
+  let factsSeasonId: number | null = null;
   out.push(
     kind === "social"
       ? "Write a short X-style social post about the subject below (+ a reply thread)."
@@ -84,6 +97,7 @@ async function buildSeed(
 
   if (media.scope === "GAME" && media.gameId != null) {
     const game = await db.game.findUnique({ where: { id: media.gameId }, select: { seasonId: true } });
+    factsSeasonId = game?.seasonId ?? null;
     out.push(`- This game: gameId ${media.gameId}` + (game ? `, seasonId ${game.seasonId}` : ""));
     // The featured players (with ids) so the writer can pull their dossiers/history.
     const featured = await db.gamePlayerStat.findMany({
@@ -99,6 +113,8 @@ async function buildSeed(
       );
     }
   } else if (media.scope === "PLAYER" && media.playerId != null) {
+    // A player piece has no season anchor — attach the current season's facts.
+    factsSeasonId = await getCurrentSeasonId();
     if (subjectPlayerIds.length > 1) {
       const names = await db.player.findMany({
         where: { id: { in: subjectPlayerIds } },
@@ -125,10 +141,24 @@ async function buildSeed(
       );
     }
   } else if (media.scope === "TEAM" && media.seasonId != null) {
+    factsSeasonId = media.seasonId;
     out.push(`- This season: seasonId ${media.seasonId}`);
+  } else if (media.scope === "RECRUIT" && media.recruitId != null) {
+    const recruit = await db.recruit.findUnique({
+      where: { id: media.recruitId },
+      select: { seasonId: true },
+    });
+    factsSeasonId = recruit?.seasonId ?? null;
+    out.push(`- This recruit: recruitId ${media.recruitId}` + (recruit ? `, class seasonId ${recruit.seasonId}` : ""));
   }
   if (media.authorPersonaId != null) {
     out.push(`- Your byline persona id: ${media.authorPersonaId} (list_articles to see your past pieces)`);
+  }
+
+  const facts = await assembleFacts(factsSeasonId);
+  if (facts) {
+    out.push("");
+    out.push(facts);
   }
 
   if (media.promptContext) {
@@ -190,6 +220,8 @@ export async function runGeneration(mediaId: number): Promise<void> {
       subject = isInjury
         ? await describeInjuryReport(media.seasonId)
         : await describeSeason(media.seasonId);
+    } else if (media.scope === "RECRUIT" && media.recruitId != null) {
+      subject = await describeRecruit(media.recruitId);
     } else {
       throw new Error("Media is missing a subject to write about.");
     }

@@ -110,5 +110,26 @@ Notes:
 - Include EVERY player row, even ones with all zeros.
 - Several images may be given, each a different category (e.g. one PASSING, one RUSHING). MERGE a player's categories into ONE line — the same person is the same first-initial + last name (e.g. "B.Joiner" passing and "B.Joiner" rushing → one line with both).`,
       };
+
+    case "scoringSummary":
+      return {
+        system: SHARED_RULES,
+        instruction: `This is a box score's SCORING SUMMARY. The header shows the scoreboard by quarter and a "Quarter" heading (First/Second/Third/Fourth); below it, "SCORING SUMMARY" lists each scoring play for that quarter. Each play line looks like:
+"(CSU) Isaac Boone, 34 Yd run (Danny Paul kick), 9:53" — a team tag, the play, and the game clock.
+Output:
+{
+  "scoreboard": { "teamQ1": number, ..., "oppQ4": number, "teamOt": number, "oppOt": number } | null,
+  "plays": [
+    { "quarter": number, "team": "team"|"opp", "clock": string|null, "description": string, "points": number|null }
+  ]
+}
+- The user's team is CADDO STATE, tagged "(CSU)". A play tagged "(CSU)" is "team"; ANY OTHER tag (e.g. "(KENN)") is "opp".
+- "quarter" is the period the play happened in (1-4; 5+ for overtime), taken from the "Quarter" heading of the image the play is under.
+- "clock" is the time shown at the end of the line ("11:54", "0:19"), or null if absent.
+- "description" is the play text WITHOUT the leading team tag and WITHOUT the trailing clock — e.g. "Isaac Boone, 34 Yd run (Danny Paul kick)", "Team Safety", "Daniel Kinney, 28 Yd FG".
+- "points" is the play's value if you can infer it: touchdown + kick = 7; touchdown + 2-pt conversion = 8; touchdown with no PAT shown = 6; field goal = 3; safety = 2. Use null if unsure.
+- SCOREBOARD: read the quarter-by-quarter line from the header if visible (as in the team-stats screen), else null. Omit OT unless the game went to overtime.
+- Several images are usually given (one per quarter). Return ALL plays across them, each tagged with its own quarter — do not drop or merge across quarters. Keep them in the on-screen order.`,
+      };
   }
 }

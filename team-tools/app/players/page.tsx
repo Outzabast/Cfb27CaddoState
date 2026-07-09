@@ -4,7 +4,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PlayerList } from "@/components/player-list";
-import { countPlayers, fetchPlayersPage } from "@/lib/players-query";
+import { countPlayers, fetchPlayersPage, DEFAULT_SORT } from "@/lib/players-query";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export default async function PlayersPage({
     db.seasonPlayer.findMany({ distinct: ["position"], select: { position: true }, orderBy: { position: "asc" } }),
     db.season.findMany({ orderBy: { startYear: "desc" } }),
     countPlayers(filters),
-    fetchPlayersPage(filters, null),
+    fetchPlayersPage(filters, DEFAULT_SORT, 0),
   ]);
   const allPositions = positionRows.map((r) => r.position);
 
@@ -34,8 +34,8 @@ export default async function PlayersPage({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Players</h1>
           <p className="text-sm text-muted-foreground">
-            Filter by name, position, or season, then open a player for season &
-            career stats.
+            Filter, then click a column to sort or pick which columns show. Open a
+            player for season & career stats.
           </p>
         </div>
         <Link
@@ -104,7 +104,12 @@ export default async function PlayersPage({
         {(q || pos || season || active) ? " match" : ""}
       </p>
 
-      <PlayerList filters={filters} initialItems={firstPage.items} initialCursor={firstPage.nextCursor} />
+      <PlayerList
+        filters={filters}
+        initialItems={firstPage.items}
+        initialOffset={firstPage.nextOffset}
+        initialSort={DEFAULT_SORT}
+      />
     </div>
   );
 }

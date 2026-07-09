@@ -35,6 +35,11 @@ export default async function NewMediaEventPage() {
     db.authorPersona.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
 
+  const recruitRows = await db.recruit.findMany({
+    orderBy: [{ season: { startYear: "desc" } }, { stars: "desc" }, { name: "asc" }],
+    select: { id: true, name: true, position: true, stars: true, season: { select: { name: true } } },
+  });
+
   const gameOptions = games.map((g) => ({
     id: g.id,
     label: `${g.season.name} · ${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}${g.week != null ? ` (Wk ${g.week})` : ""}`,
@@ -46,6 +51,11 @@ export default async function NewMediaEventPage() {
     name: p.name,
     status: p.status,
     position: p.seasonPlayers[0]?.position ?? null,
+  }));
+
+  const recruitOptions = recruitRows.map((r) => ({
+    id: r.id,
+    label: `${r.season.name} · ${r.name} (${r.position})${r.stars ? ` · ${r.stars}★` : ""}`,
   }));
 
   return (
@@ -63,7 +73,13 @@ export default async function NewMediaEventPage() {
         </p>
       </div>
 
-      <NewEventForm games={gameOptions} seasons={seasons} players={playerOptions} personas={personas} />
+      <NewEventForm
+        games={gameOptions}
+        seasons={seasons}
+        players={playerOptions}
+        recruits={recruitOptions}
+        personas={personas}
+      />
     </div>
   );
 }

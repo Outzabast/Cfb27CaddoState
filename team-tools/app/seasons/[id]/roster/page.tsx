@@ -6,6 +6,8 @@ import { RosterTable, type RosterRow } from "@/components/roster-table";
 import { RosterReadTable, type RosterReadRow } from "@/components/roster-read-table";
 import { MultiPlayerForm } from "@/components/multi-player-form";
 import { RosterImportMenu } from "@/components/ocr/roster-import";
+import { FactGroup } from "@/components/media/fact-group";
+import { factsForScope } from "@/lib/media/facts";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -34,6 +36,7 @@ export default async function RosterPage({
   const isEdit = (await searchParams).mode === "edit";
   const players = season.roster?.players ?? [];
   const basePath = `/seasons/${seasonId}/roster`;
+  const rosterFacts = isEdit ? await factsForScope("ROSTER", seasonId) : [];
 
   const editRows: RosterRow[] = players.map((sp) => ({
     seasonPlayerId: sp.id,
@@ -111,6 +114,25 @@ export default async function RosterPage({
             <MultiPlayerForm seasonId={seasonId} />
           </CardContent>
         </Card>
+      )}
+
+      {isEdit && (
+        <section className="max-w-3xl space-y-3">
+          <h2 className="text-lg font-semibold">Roster facts</h2>
+          <p className="text-sm text-muted-foreground">
+            Context about this roster the box score doesn&rsquo;t show — depth,
+            position battles, a converted position, who&rsquo;s stepping up. Feeds
+            media about {season.name}.
+          </p>
+          <FactGroup
+            scope="ROSTER"
+            title="Roster"
+            blurb="This season's roster context — depth, injuries reshaping a unit, a freshman starting."
+            facts={rosterFacts}
+            seasonId={seasonId}
+            revalidate={basePath}
+          />
+        </section>
       )}
     </div>
   );

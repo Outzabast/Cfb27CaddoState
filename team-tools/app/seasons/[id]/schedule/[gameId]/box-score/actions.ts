@@ -229,6 +229,91 @@ export async function commitOcrBoxScore(
   revalidatePath(path);
 }
 
+export type OcrScoringPlayInput = {
+  quarter: number | null;
+  team: "team" | "opp";
+  clock: string | null;
+  description: string;
+  points: number | null;
+};
+
+/** "mm:ss" → seconds (for ordering within a quarter, where the clock counts down);
+ *  null/garbage sorts to the end of the quarter. */
+function clockSeconds(clock: string | null): number {
+  if (!clock) return -1;
+  const m = clock.match(/^(\d{1,2}):(\d{2})$/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+}
+
+/**
+ * Replace a game's scoring summary with the reviewed OCR plays, and optionally set
+ * the quarter-by-quarter score (same as the box-score import). Plays are ordered
+ * chronologically — quarter ascending, then game clock descending (it counts down).
+ */
+export async function commitOcrScoringSummary(
+  seasonId: number,
+  gameId: number,
+  plays: OcrScoringPlayInput[],
+  scoreboard: OcrScoreboard | null,
+) {
+  if (![seasonId, gameId].every(Number.isInteger)) throw new Error("Bad ids.");
+  const path = `/seasons/${seasonId}/schedule/${gameId}/box-score`;
+
+  const cleaned = (Array.isArray(plays) ? plays : [])
+    .map((p) => ({
+      quarter: Number.isInteger(p?.quarter) ? (p.quarter as number) : 1,
+      team: p?.team === "opp" ? ("OPP" as const) : ("TEAM" as const),
+      clock: typeof p?.clock === "string" && /^\d{1,2}:\d{2}$/.test(p.clock) ? p.clock : null,
+      description: String(p?.description ?? "").trim(),
+      points: Number.isInteger(p?.points) && (p.points as number) >= 0 ? (p.points as number) : null,
+    }))
+    .filter((p) => p.description);
+
+  cleaned.sort((a, b) => a.quarter - b.quarter || clockSeconds(b.clock) - clockSeconds(a.clock));
+
+  await db.$transaction(async (tx) => {
+    await tx.scoringPlay.deleteMany({ where: { gameId } });
+    if (cleaned.length) {
+      await tx.scoringPlay.createMany({
+        data: cleaned.map((p, i) => ({
+          gameId,
+          quarter: p.quarter,
+          team: p.team,
+          clock: p.clock,
+          description: p.description,
+          points: p.points,
+          sortOrder: i,
+        })),
+      });
+    }
+  });
+
+  if (scoreboard && SCOREBOARD_FIELDS.some((f) => scoreboard[f] != null)) {
+    const q = (f: keyof OcrScoreboard) => {
+      const n = Number(scoreboard[f] ?? 0);
+      return Number.isInteger(n) && n >= 0 ? n : 0;
+    };
+    const teamQ1 = q("teamQ1"), teamQ2 = q("teamQ2"), teamQ3 = q("teamQ3"),
+      teamQ4 = q("teamQ4"), teamOt = q("teamOt");
+    const oppQ1 = q("oppQ1"), oppQ2 = q("oppQ2"), oppQ3 = q("oppQ3"),
+      oppQ4 = q("oppQ4"), oppOt = q("oppOt");
+    await db.game.update({
+      where: { id: gameId },
+      data: {
+        teamQ1, teamQ2, teamQ3, teamQ4, teamOt,
+        oppQ1, oppQ2, oppQ3, oppQ4, oppOt,
+        teamPoints: teamQ1 + teamQ2 + teamQ3 + teamQ4 + teamOt,
+        oppPoints: oppQ1 + oppQ2 + oppQ3 + oppQ4 + oppOt,
+      },
+    });
+    after(() => recomputeAllSentiment());
+    after(() => recomputeStaffAll());
+    revalidatePath(`/seasons/${seasonId}/schedule`);
+  }
+
+  revalidatePath(path);
+}
+
 export type OcrPlayerStatInput = {
   /** An existing rostered player, or null when creating a new one. */
   playerId: number | null;

@@ -19,6 +19,7 @@ export type PostEventInput = {
   playerId?: number | null;
   gameId?: number | null;
   seasonId?: number | null;
+  recruitId?: number | null;
   context?: string | null;
   /** Author personas to write as — one piece each. Empty = one default-voice piece. */
   personaIds?: number[];
@@ -43,6 +44,7 @@ export async function postMediaEvent(input: PostEventInput): Promise<number> {
       playerId: input.scope === "PLAYER" ? input.playerId ?? null : null,
       gameId: input.scope === "GAME" ? input.gameId ?? null : null,
       seasonId: input.scope === "TEAM" ? input.seasonId ?? null : null,
+      recruitId: input.scope === "RECRUIT" ? input.recruitId ?? null : null,
       context: input.context?.trim() || null,
       personaIds: input.personaIds ?? [],
       playerIds: input.playerIds ?? [],
@@ -60,6 +62,7 @@ type Target = {
   playerId: number | null;
   gameId: number | null;
   seasonId: number | null;
+  recruitId: number | null;
 };
 
 /**
@@ -78,33 +81,50 @@ export async function processMediaEvent(eventId: number): Promise<void> {
     // here. Generation just reads the current values.
 
     // For a PLAYER event, playerIds are ADDITIONAL SUBJECTS of one article (tagged
-    // onto the piece). For GAME/TEAM, they're separate PLAYER features to fan out.
+    // onto the piece); a RECRUIT event is likewise a single subject. For GAME/TEAM,
+    // playerIds are separate PLAYER features to fan out.
     const isPlayerScope = event.scope === "PLAYER";
-    const targets: Target[] = isPlayerScope
-      ? [{ scope: "PLAYER", playerId: event.playerId, gameId: null, seasonId: null }]
+    const isSingleSubject = isPlayerScope || event.scope === "RECRUIT";
+    const targets: Target[] = isSingleSubject
+      ? [
+          {
+            scope: event.scope,
+            playerId: event.playerId,
+            gameId: null,
+            seasonId: null,
+            recruitId: event.recruitId,
+          },
+        ]
       : [
           {
             scope: event.scope,
             playerId: event.playerId,
             gameId: event.gameId,
             seasonId: event.seasonId,
+            recruitId: null,
           },
           ...event.playerIds.map((pid) => ({
             scope: "PLAYER" as MediaScope,
             playerId: pid,
             gameId: null,
             seasonId: null,
+            recruitId: null,
           })),
         ];
     // One piece per persona (empty personas = a single default-voice piece).
     const personas: (number | null)[] = event.personaIds.length ? event.personaIds : [null];
 
     // The season a GAME event's game belongs to — so game recaps also tag their
-    // season and surface under it.
+    // season and surface under it. Likewise a recruit's class season.
     let gameSeasonId: number | null = null;
     if (event.scope === "GAME" && event.gameId != null) {
       const g = await db.game.findUnique({ where: { id: event.gameId }, select: { seasonId: true } });
       gameSeasonId = g?.seasonId ?? null;
+    }
+    let recruitSeasonId: number | null = null;
+    if (event.scope === "RECRUIT" && event.recruitId != null) {
+      const r = await db.recruit.findUnique({ where: { id: event.recruitId }, select: { seasonId: true } });
+      recruitSeasonId = r?.seasonId ?? null;
     }
 
     for (const target of targets) {
@@ -118,6 +138,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
             playerId: target.playerId,
             gameId: target.gameId,
             seasonId: target.seasonId,
+            recruitId: target.recruitId,
             promptContext: event.context,
             authorPersonaId: personaId,
             mediaEventId: eventId,
@@ -134,6 +155,10 @@ export async function processMediaEvent(eventId: number): Promise<void> {
           if (gameSeasonId != null) tags.push({ mediaId: media.id, seasonId: gameSeasonId });
         }
         if (target.seasonId != null) tags.push({ mediaId: media.id, seasonId: target.seasonId });
+        // A recruiting piece surfaces under its recruiting-class season.
+        if (target.recruitId != null && recruitSeasonId != null) {
+          tags.push({ mediaId: media.id, seasonId: recruitSeasonId });
+        }
         // For a player piece, also tag the extra subject players AND any focus games.
         if (isPlayerScope) {
           tags.push(...event.playerIds.map((pid) => ({ mediaId: media.id, playerId: pid })));

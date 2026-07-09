@@ -34,6 +34,7 @@ export default async function MediaDetailPage({
       player: { select: { id: true, name: true } },
       game: { select: { id: true, opponent: true, week: true, seasonId: true, season: { select: { name: true } } } },
       season: { select: { id: true, name: true } },
+      recruit: { select: { id: true, name: true } },
       authorPersona: { select: { name: true } },
     },
     omit: { photo: true },
@@ -58,6 +59,9 @@ export default async function MediaDetailPage({
     seasonId = media.season.id;
     subjectHref = `/seasons/${media.season.id}`;
     subjectLabel = media.season.name;
+  } else if (media.scope === "RECRUIT" && media.recruit) {
+    subjectHref = `/recruits/${media.recruit.id}`;
+    subjectLabel = media.recruit.name;
   }
 
   // "See more" — other ready pieces about the same subject.
@@ -66,8 +70,10 @@ export default async function MediaDetailPage({
       ? { playerId: media.playerId }
       : media.scope === "GAME"
         ? { gameId: media.gameId }
-        : { seasonId: media.seasonId };
-  const related = media.playerId || media.gameId || media.seasonId
+        : media.scope === "RECRUIT"
+          ? { recruitId: media.recruitId }
+          : { seasonId: media.seasonId };
+  const related = media.playerId || media.gameId || media.seasonId || media.recruitId
     ? await db.media.findMany({
         where: { ...anchor, status: "READY", id: { not: id } },
         orderBy: { createdAt: "desc" },

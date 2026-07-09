@@ -35,6 +35,7 @@ const SCOPE_TAG: Record<MediaScope, string> = {
   PLAYER: "Player",
   GAME: "Game",
   TEAM: "Team",
+  RECRUIT: "Recruit",
 };
 
 function StatusPill({ status }: { status: MediaGenStatus }) {

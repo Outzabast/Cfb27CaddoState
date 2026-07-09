@@ -13,9 +13,13 @@ import {
 import {
   compactStatSummary,
   describeGame,
+  describeRecruit,
   describeSeason,
 } from "./subject";
+import { researchFacts } from "./facts";
+import { RECRUIT_STATUS_LABELS } from "@/lib/recruits";
 import type { ToolSchema } from "./openrouter";
+import type { FactScope, RecruitStatus } from "@/generated/prisma/enums";
 
 const agg = aggregateSelect(PLAYER_STAT_GROUPS);
 const int = (v: unknown) => {
@@ -132,6 +136,65 @@ export const MEDIA_TOOLS: ToolSchema[] = [
         type: "object",
         properties: { mediaId: { type: "integer" } },
         required: ["mediaId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_recruit",
+      description:
+        "Full scouting profile on one recruiting prospect: identity, position, stars/composite rating, national/position/state rankings, measurables, high school/hometown, other offers, funnel status with us, and whether they've signed (become a roster player).",
+      parameters: {
+        type: "object",
+        properties: { recruitId: { type: "integer" } },
+        required: ["recruitId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_recruits",
+      description: "Search recruits by name (substring). Returns id, name, position, stars, and status.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_recruits",
+      description:
+        "A recruiting class (by seasonId), ordered by rating: prospects with position, stars, composite rating, and funnel status. Optionally filter by status.",
+      parameters: {
+        type: "object",
+        properties: {
+          seasonId: { type: "integer" },
+          status: {
+            type: "string",
+            enum: ["TARGET", "OFFERED", "COMMITTED", "SIGNED", "ENROLLED", "DECOMMITTED", "LOST"],
+          },
+        },
+        required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_facts",
+      description:
+        "Additional standing editorial facts about the program and this season that weren't important enough to inject up front — background color the box score won't show (rivalries, off-field storylines, roster notes). The high-importance ones are already in your prompt; call this to dig for more. Optionally filter to one layer.",
+      parameters: {
+        type: "object",
+        properties: {
+          seasonId: { type: "integer" },
+          scope: { type: "string", enum: ["TEAM", "SEASON", "ROSTER"] },
+        },
       },
     },
   },
@@ -291,6 +354,44 @@ async function listArticles(args: {
   };
 }
 
+async function findRecruits(query: string) {
+  const q = query.trim();
+  if (!q) return { recruits: [] };
+  const rows = await db.recruit.findMany({
+    where: { name: { contains: q, mode: "insensitive" } },
+    take: 10,
+    orderBy: [{ stars: "desc" }, { rating: "desc" }],
+    select: { id: true, name: true, position: true, stars: true, status: true },
+  });
+  return {
+    recruits: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      position: r.position,
+      stars: r.stars,
+      status: RECRUIT_STATUS_LABELS[r.status],
+    })),
+  };
+}
+
+async function listRecruits(seasonId: number, status?: RecruitStatus) {
+  const rows = await db.recruit.findMany({
+    where: { seasonId, ...(status ? { status } : {}) },
+    orderBy: [{ stars: "desc" }, { rating: "desc" }, { nationalRank: "asc" }],
+    select: { id: true, name: true, position: true, stars: true, rating: true, status: true },
+  });
+  return {
+    recruits: rows.map((r) => ({
+      recruitId: r.id,
+      name: r.name,
+      position: r.position,
+      stars: r.stars,
+      rating: r.rating,
+      status: RECRUIT_STATUS_LABELS[r.status],
+    })),
+  };
+}
+
 async function getArticle(mediaId: number) {
   const m = await db.media.findUnique({
     where: { id: mediaId },
@@ -339,6 +440,31 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
       case "get_article": {
         const id = int(args.mediaId);
         result = id == null ? { error: "mediaId required." } : await getArticle(id);
+        break;
+      }
+      case "get_recruit": {
+        const id = int(args.recruitId);
+        result = id == null ? { error: "recruitId required." } : { profile: await describeRecruit(id) };
+        break;
+      }
+      case "find_recruits":
+        result = await findRecruits(String(args.query ?? ""));
+        break;
+      case "list_recruits": {
+        const id = int(args.seasonId);
+        const statusRaw = String(args.status ?? "");
+        const status = (Object.keys(RECRUIT_STATUS_LABELS) as string[]).includes(statusRaw)
+          ? (statusRaw as RecruitStatus)
+          : undefined;
+        result = id == null ? { error: "seasonId required." } : await listRecruits(id, status);
+        break;
+      }
+      case "list_facts": {
+        const scopeRaw = String(args.scope ?? "");
+        const scope = (["TEAM", "SEASON", "ROSTER"] as string[]).includes(scopeRaw)
+          ? (scopeRaw as FactScope)
+          : undefined;
+        result = { facts: await researchFacts(int(args.seasonId), scope) };
         break;
       }
       default:

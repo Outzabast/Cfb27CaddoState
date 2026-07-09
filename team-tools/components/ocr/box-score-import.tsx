@@ -24,6 +24,7 @@ import { matchNameIndex, nameKey } from "@/lib/ocr/name-match";
 import {
   commitOcrBoxScore,
   commitOcrPlayerStats,
+  commitOcrScoringSummary,
   type OcrPlayerStatInput,
 } from "@/app/seasons/[id]/schedule/[gameId]/box-score/actions";
 import { OcrFilePicker } from "./ocr-file-picker";
@@ -67,6 +68,7 @@ export function BoxScoreImportMenu({
 }) {
   const [teamOpen, setTeamOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   return (
     <>
@@ -86,6 +88,9 @@ export function BoxScoreImportMenu({
           <DropdownMenuItem onClick={() => setPlayerOpen(true)}>
             Player stat lines from screenshots
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setSummaryOpen(true)}>
+            Scoring summary from screenshots
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -101,6 +106,12 @@ export function BoxScoreImportMenu({
         roster={roster}
         open={playerOpen}
         onOpenChange={setPlayerOpen}
+      />
+      <ScoringSummaryOcrDialog
+        seasonId={seasonId}
+        gameId={gameId}
+        open={summaryOpen}
+        onOpenChange={setSummaryOpen}
       />
     </>
   );
@@ -619,6 +630,229 @@ function PlayerStatsOcrDialog({
             {pending
               ? "Importing…"
               : `Import ${selected.length} line${selected.length === 1 ? "" : "s"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------ Scoring summary ------------------------------ */
+
+type ScoringRow = {
+  id: number;
+  quarter: number; // 1-4 regulation, 5 = OT
+  team: "team" | "opp";
+  clock: string;
+  description: string;
+  points: string;
+};
+
+const QUARTER_OPTS = [
+  { value: 1, label: "Q1" },
+  { value: 2, label: "Q2" },
+  { value: 3, label: "Q3" },
+  { value: 4, label: "Q4" },
+  { value: 5, label: "OT" },
+];
+
+function ScoringSummaryOcrDialog({
+  seasonId,
+  gameId,
+  open,
+  onOpenChange,
+}: {
+  seasonId: number;
+  gameId: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const [rows, setRows] = useState<ScoringRow[]>([]);
+  const [score, setScore] = useState<OcrScoreboard>({});
+  const [importScore, setImportScore] = useState(false);
+  const [shots, setShots] = useState(0);
+  const [nextId, setNextId] = useState(0);
+  const [pending, startTransition] = useTransition();
+
+  function mergeResult(result: OcrResult) {
+    if (result.kind !== "scoringSummary") return;
+    setShots((s) => s + 1);
+    setRows((prev) => {
+      let id = nextId;
+      const seen = new Set(prev.map((r) => `${r.quarter}|${r.clock}|${r.description.toLowerCase()}`));
+      const added: ScoringRow[] = [];
+      for (const p of result.plays) {
+        const quarter = p.quarter && p.quarter >= 1 && p.quarter <= 5 ? p.quarter : 1;
+        const clock = p.clock ?? "";
+        const key = `${quarter}|${clock}|${p.description.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        added.push({
+          id: id++,
+          quarter,
+          team: p.team,
+          clock,
+          description: p.description,
+          points: p.points != null ? String(p.points) : "",
+        });
+      }
+      setNextId(id);
+      return [...prev, ...added].sort((a, b) => a.quarter - b.quarter);
+    });
+    if (result.scoreboard) {
+      setScore((prev) => ({ ...prev, ...result.scoreboard }));
+      setImportScore(true);
+    }
+  }
+
+  function reset() {
+    setRows([]);
+    setScore({});
+    setImportScore(false);
+    setShots(0);
+  }
+  const update = (id: number, patch: Partial<ScoringRow>) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const remove = (id: number) => setRows((rs) => rs.filter((r) => r.id !== id));
+
+  function doImport() {
+    const plays = rows
+      .filter((r) => r.description.trim())
+      .map((r) => ({
+        quarter: r.quarter,
+        team: r.team,
+        clock: /^\d{1,2}:\d{2}$/.test(r.clock.trim()) ? r.clock.trim() : null,
+        description: r.description.trim(),
+        points: r.points.trim() === "" ? null : Number(r.points),
+      }));
+    const scoreboard = importScore ? score : null;
+    startTransition(async () => {
+      const id = toast.loading("Saving scoring summary…");
+      try {
+        await commitOcrScoringSummary(seasonId, gameId, plays, scoreboard);
+        toast.success(`Saved ${plays.length} scoring play${plays.length === 1 ? "" : "s"}`, { id });
+        reset();
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Save failed", { id });
+      }
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Import scoring summary</DialogTitle>
+          <DialogDescription>
+            Add each quarter&rsquo;s scoring-summary screenshot (they stack). Review
+            the plays — who scored, when — then save. This replaces the game&rsquo;s
+            current scoring summary.
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogBody className="space-y-3">
+          <OcrFilePicker
+            kind="scoringSummary"
+            onResult={mergeResult}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more quarters"}
+            hint={
+              shots > 0
+                ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} play${rows.length === 1 ? "" : "s"}`
+                : "Select all four quarter screenshots together, or add them one at a time."
+            }
+          />
+
+          {rows.length > 0 && (
+            <div className="space-y-3 border-t pt-3">
+              {Object.keys(score).length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={importScore}
+                    onChange={(e) => setImportScore(e.target.checked)}
+                    className="size-4"
+                  />
+                  Also set the score by quarter from these screenshots
+                </label>
+              )}
+              <div className="space-y-1.5">
+                {rows.map((r) => (
+                  <div key={r.id} className="flex items-center gap-1.5">
+                    <select
+                      value={r.quarter}
+                      onChange={(e) => update(r.id, { quarter: Number(e.target.value) })}
+                      className={cn(selectClass, "h-8 w-16")}
+                      aria-label="Quarter"
+                    >
+                      {QUARTER_OPTS.map((q) => (
+                        <option key={q.value} value={q.value}>
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={r.team}
+                      onChange={(e) => update(r.id, { team: e.target.value as "team" | "opp" })}
+                      className={cn(selectClass, "h-8 w-20")}
+                      aria-label="Scoring team"
+                    >
+                      <option value="team">Us</option>
+                      <option value="opp">Them</option>
+                    </select>
+                    <Input
+                      value={r.clock}
+                      onChange={(e) => update(r.id, { clock: e.target.value })}
+                      placeholder="mm:ss"
+                      className="h-8 w-20"
+                      aria-label="Clock"
+                    />
+                    <Input
+                      value={r.description}
+                      onChange={(e) => update(r.id, { description: e.target.value })}
+                      placeholder="Scorer, play (PAT)"
+                      className="h-8 flex-1"
+                      aria-label="Play"
+                    />
+                    <Input
+                      value={r.points}
+                      onChange={(e) => update(r.id, { points: e.target.value })}
+                      type="number"
+                      placeholder="pts"
+                      className="h-8 w-14"
+                      aria-label="Points"
+                    />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => remove(r.id)} aria-label="Remove play">
+                      ×
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {shots > 0 && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No scoring plays were read from that image. Try a clearer screenshot.
+            </p>
+          )}
+        </DialogBody>
+
+        <DialogFooter>
+          {rows.length > 0 && (
+            <Button type="button" variant="ghost" onClick={reset}>
+              Clear
+            </Button>
+          )}
+          <Button type="button" onClick={doImport} disabled={rows.length === 0 || pending}>
+            {pending ? "Saving…" : `Save ${rows.length} play${rows.length === 1 ? "" : "s"}`}
           </Button>
         </DialogFooter>
       </DialogContent>

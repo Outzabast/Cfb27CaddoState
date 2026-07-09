@@ -4,8 +4,14 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { advanceClass, INACTIVE_CLASSES } from "@/lib/classes";
+import { advanceClass, INACTIVE_CLASSES, isValidClass } from "@/lib/classes";
 import { recomputeAllSentiment } from "@/lib/sentiment";
+import type { PlayerClass } from "@/generated/prisma/enums";
+
+/** Collect a repeated integer form field (checkbox group). */
+function idList(fd: FormData, name: string): number[] {
+  return [...new Set(fd.getAll(name).map((v) => Number(v)).filter((n) => Number.isInteger(n)))];
+}
 
 /** Create a season (and its empty roster) from scratch, e.g. the very first one. */
 export async function createSeason(formData: FormData) {
@@ -25,6 +31,29 @@ export async function createSeason(formData: FormData) {
   });
   after(() => recomputeAllSentiment());
   revalidatePath("/seasons");
+}
+
+/** Update a season's core fields (name, years, conference) from its edit page. */
+export async function updateSeason(formData: FormData) {
+  const id = Number(formData.get("id"));
+  if (!Number.isInteger(id)) throw new Error("Bad season id.");
+  const name = String(formData.get("name") ?? "").trim();
+  const startYear = Number(formData.get("startYear"));
+  const endYear = Number(formData.get("endYear"));
+  if (!name) throw new Error("Season name is required.");
+  if (!Number.isInteger(startYear) || !Number.isInteger(endYear)) {
+    throw new Error("Start and end year must be whole numbers.");
+  }
+  const conference = String(formData.get("conference") ?? "").trim() || null;
+
+  await db.season.update({
+    where: { id },
+    data: { name, startYear, endYear, conference },
+  });
+  after(() => recomputeAllSentiment());
+  revalidatePath("/seasons");
+  revalidatePath(`/seasons/${id}`);
+  revalidatePath(`/seasons/edit/${id}`);
 }
 
 /** Set (or clear) a season's manual fan-sentiment baseline override, 0–100. */
@@ -65,15 +94,30 @@ export async function deleteSeason(formData: FormData) {
 }
 
 /**
- * Start the season that follows `fromSeasonId`. Creates the next season + roster
- * and adds a NEW SeasonPlayer row for each returning player with their class
- * stepped up. Seniors advance to GRADUATED and are not carried over. The previous
- * season's SeasonPlayer rows are left untouched, so its record keeps the classes
- * those players actually had that year.
+ * Commit the offseason: start the season after `fromSeasonId` and build its roster
+ * from three reviewed lists —
+ *   • returning players carry over with their class stepped up (seniors graduate),
+ *     EXCEPT anyone in `departingPlayerId` (transfer out / early departure);
+ *   • players not carried forward (graduates + departures) are marked POSTACTIVE;
+ *   • `enrollRecruitId` signees (of the finishing cycle) become players on the new
+ *     roster — a Player + SeasonPlayer, with the recruit linked (status ENROLLED),
+ *     each using its per-recruit `class_<id>` / `number_<id>` inputs.
+ * The previous season's SeasonPlayer rows are left untouched.
  */
-export async function advanceSeason(formData: FormData) {
+export async function commitAdvance(formData: FormData) {
   const fromSeasonId = Number(formData.get("fromSeasonId"));
   if (!Number.isInteger(fromSeasonId)) throw new Error("Bad season id.");
+
+  const departing = new Set(idList(formData, "departingPlayerId"));
+  const enrollRecruitIds = idList(formData, "enrollRecruitId");
+  const enrollClass = (id: number): PlayerClass => {
+    const raw = String(formData.get(`class_${id}`) ?? "FRESHMAN");
+    return isValidClass(raw) ? raw : "FRESHMAN";
+  };
+  const enrollNumber = (id: number): number | null => {
+    const n = Math.round(Number(formData.get(`number_${id}`)));
+    return Number.isInteger(n) ? n : null;
+  };
 
   const newSeasonId = await db.$transaction(async (tx) => {
     const prev = await tx.season.findUniqueOrThrow({
@@ -83,17 +127,22 @@ export async function advanceSeason(formData: FormData) {
 
     const startYear = prev.startYear + 1;
     const endYear = prev.endYear + 1;
-    const name = `${startYear}-${endYear}`;
-
     const next = await tx.season.create({
-      data: { name, startYear, endYear, roster: { create: {} } },
+      data: { name: `${startYear}-${endYear}`, startYear, endYear, roster: { create: {} } },
       include: { roster: true },
     });
     const nextRosterId = next.roster!.id;
 
+    // Returning players (class stepped up); graduates + marked departures drop off
+    // and become POSTACTIVE.
+    const leaving: number[] = [];
     for (const sp of prev.roster?.players ?? []) {
       const nextClass = advanceClass(sp.class);
-      if (INACTIVE_CLASSES.includes(nextClass)) continue; // graduated / transferred
+      const graduates = INACTIVE_CLASSES.includes(nextClass);
+      if (graduates || departing.has(sp.playerId)) {
+        leaving.push(sp.playerId);
+        continue;
+      }
       await tx.seasonPlayer.create({
         data: {
           seasonRosterId: nextRosterId,
@@ -105,11 +154,47 @@ export async function advanceSeason(formData: FormData) {
         },
       });
     }
+    if (leaving.length) {
+      await tx.player.updateMany({ where: { id: { in: leaving } }, data: { status: "POSTACTIVE" } });
+    }
+
+    // Enroll the selected signees of the finishing cycle onto the new roster.
+    if (enrollRecruitIds.length) {
+      const recruits = await tx.recruit.findMany({
+        where: { id: { in: enrollRecruitIds }, seasonId: fromSeasonId, playerId: null },
+      });
+      for (const r of recruits) {
+        const player = await tx.player.create({
+          data: {
+            name: r.name,
+            heightInches: r.heightInches,
+            weightLbs: r.weightLbs,
+            hometown: [r.hometownCity, r.hometownState].filter(Boolean).join(", ") || null,
+            bio: r.bio,
+            status: "ACTIVE",
+          },
+          select: { id: true, name: true },
+        });
+        await tx.seasonPlayer.create({
+          data: {
+            seasonRosterId: nextRosterId,
+            playerId: player.id,
+            playerName: player.name,
+            position: r.position.slice(0, 8),
+            class: enrollClass(r.id),
+            number: enrollNumber(r.id),
+            isStarter: false,
+          },
+        });
+        await tx.recruit.update({ where: { id: r.id }, data: { playerId: player.id, status: "ENROLLED" } });
+      }
+    }
 
     return next.id;
   });
 
   after(() => recomputeAllSentiment());
   revalidatePath("/seasons");
+  revalidatePath("/players");
   redirect(`/seasons/${newSeasonId}/roster`);
 }

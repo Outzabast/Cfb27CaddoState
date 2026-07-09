@@ -85,6 +85,9 @@ model Player {
   mediaTags       MediaTag[]
   mediaEvents     MediaEvent[]
   notorietyEvents NotorietyEvent[]
+  /// The recruit record this player came from, if they were signed out of a
+  /// recruiting class (null for players added directly to a roster).
+  recruit         Recruit?
 
   @@map("players")
 }
@@ -131,8 +134,136 @@ model Season {
   media       Media[]
   mediaTags   MediaTag[]
   mediaEvents MediaEvent[]
+  facts       Fact[]
+  recruits    Recruit[]
 
   @@map("seasons")
+}
+
+/// The topical layer a standing fact belongs to. TEAM facts are global (seasonId
+/// null) program canon that supplements TEAM_FACTS; SEASON facts are that season's
+/// storylines; ROSTER facts are that season's roster context. Both season-scoped
+/// layers require a seasonId.
+enum FactScope {
+  TEAM
+  SEASON
+  ROSTER
+
+  @@map("fact_scope")
+}
+
+/// A piece of standing editorial context injected into media generation across
+/// many articles — the "stuff the stats don't show" you'd otherwise retype into
+/// every prompt (rebuilding year, poached coordinator, thin at DB…). One fact per
+/// row. Assembled per-article by scope; see lib/media/facts.ts.
+model Fact {
+  id        Int       @id @default(autoincrement())
+  scope     FactScope
+  /// Null for TEAM (global). Required for SEASON/ROSTER — the season it describes.
+  seasonId  Int?      @map("season_id")
+  body      String
+  /// How important this fact is, 0–100. Facts at/above FACT_AUTOINJECT_THRESHOLD
+  /// are force-injected into every relevant piece; the rest stay out of context
+  /// but are researchable on demand via the list_facts tool (keeps context lean
+  /// as the archive grows). See lib/media/facts.ts + constants.ts.
+  importance Int      @default(50)
+  /// Inactive facts stay authored but aren't injected — a toggle, not a delete.
+  active    Boolean   @default(true)
+  /// Ascending display + injection order within a (scope, season) group.
+  sortOrder Int       @default(0) @map("sort_order")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  season Season? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@index([scope, seasonId])
+  @@map("facts")
+}
+
+/// Where a recruit stands in the recruiting funnel, relative to our program.
+/// TARGET (on the board) → OFFERED → COMMITTED (verbal) → SIGNED (LOI) →
+/// ENROLLED (on campus). DECOMMITTED / LOST are the ways it falls through.
+enum RecruitStatus {
+  TARGET
+  OFFERED
+  COMMITTED
+  SIGNED
+  ENROLLED
+  DECOMMITTED
+  LOST
+
+  @@map("recruit_status")
+}
+
+/// Where a recruit is coming FROM. HIGH_SCHOOL is a traditional prospect; TRANSFER
+/// is a portal add who has already played college ball elsewhere (they arrive with
+/// a previous school + remaining eligibility rather than a class rank).
+enum RecruitKind {
+  HIGH_SCHOOL
+  TRANSFER
+
+  @@map("recruit_kind")
+}
+
+/// A recruiting prospect the program is tracking. Deliberately NOT a Player: a
+/// recruit who never signs never played for us, and a recruit belongs to a
+/// recruiting CLASS (its season) so 2026-2027 targets don't blur into 2027-2028.
+/// Carries its own identity + 247-style scouting data. When a recruit signs they
+/// BECOME a player who played here: `playerId` is filled (and a SeasonPlayer is
+/// created) at that point — the Recruit row stays as the prospect history.
+model Recruit {
+  id       Int    @id @default(autoincrement())
+  /// The recruiting class this prospect belongs to (a season).
+  seasonId Int    @map("season_id")
+  name     String
+  position String @db.VarChar(8)
+
+  /// High-school prospect vs. transfer-portal add.
+  kind RecruitKind @default(HIGH_SCHOOL)
+  /// TRANSFER only: the program they're coming from, and eligibility remaining.
+  previousSchool   String? @map("previous_school")
+  eligibilityYears Int?    @map("eligibility_years")
+
+  // Physicals + origin (a recruit's own — not a Player's, since they may never sign).
+  heightInches  Int?    @map("height_inches")
+  weightLbs     Int?    @map("weight_lbs")
+  hometownCity  String? @map("hometown_city")
+  hometownState String? @map("hometown_state")
+  highSchool    String? @map("high_school")
+
+  // 247-style scouting. stars 0–5; rating is the composite (0–1, e.g. 0.9421);
+  // ranks are national / positional / state (nullable — not every prospect is ranked).
+  stars        Int    @default(0)
+  rating       Float?
+  nationalRank Int?   @map("national_rank")
+  positionRank Int?   @map("position_rank")
+  stateRank    Int?   @map("state_rank")
+
+  // Funnel + color.
+  status      RecruitStatus @default(TARGET)
+  committedAt DateTime?     @map("committed_at")
+  /// Other programs competing for / that landed the prospect (free text).
+  otherOffers String?       @map("other_offers")
+  bio         String?
+  notes       String?
+  photo       Bytes?
+
+  /// Set when the recruit signs and becomes one of our players. Unique: a recruit
+  /// maps to at most one player, and vice versa. SetNull so deleting the player
+  /// doesn't erase the prospect history.
+  playerId Int? @unique @map("player_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  season      Season       @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  player      Player?      @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  media       Media[]
+  mediaEvents MediaEvent[]
+
+  @@index([seasonId])
+  @@index([status])
+  @@map("recruits")
 }
 
 /// A coaching role held for a season. Fixed set for now; extensible later.
@@ -251,16 +382,50 @@ model Game {
   oppOt      Int          @default(0) @map("opp_ot")
   createdAt  DateTime     @default(now()) @map("created_at")
 
-  season      Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  playerStats GamePlayerStat[]
-  teamStats   GameTeamStat?
-  oppStats    GameOppStat?
-  media       Media[]
-  mediaTags   MediaTag[]
-  mediaEvents MediaEvent[]
+  season       Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  playerStats  GamePlayerStat[]
+  teamStats    GameTeamStat?
+  oppStats     GameOppStat?
+  scoringPlays ScoringPlay[]
+  media        Media[]
+  mediaTags    MediaTag[]
+  mediaEvents  MediaEvent[]
 
   @@unique([seasonId, week])
   @@map("games")
+}
+
+/// Which side scored a play. TEAM = Caddo State, OPP = the opponent.
+enum ScoringTeam {
+  TEAM
+  OPP
+
+  @@map("scoring_team")
+}
+
+/// One entry in a game's scoring summary (the drive-by-drive "who scored when").
+/// Imported from the box score's per-quarter scoring-summary screens; gives media
+/// generation the shape of how the game actually unfolded, beyond the final line.
+model ScoringPlay {
+  id     Int @id @default(autoincrement())
+  gameId Int @map("game_id")
+  /// 1–4 for regulation; 5+ for overtime periods.
+  quarter Int
+  team    ScoringTeam
+  /// Game clock the play occurred at, "mm:ss" as shown (null if unreadable).
+  clock String?
+  /// The scoring play as written, minus the team tag —
+  /// e.g. "Isaac Boone, 34 Yd run (Danny Paul kick)".
+  description String
+  /// Points the play was worth (7 TD+kick, 6 TD, 3 FG, 2 safety, 8 TD+2pt…), if inferable.
+  points Int?
+  /// Chronological order across the whole game (quarter asc, clock descending).
+  sortOrder Int @default(0) @map("sort_order")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@map("scoring_plays")
 }
 
 /// One player's box-score line for one game. Every counting stat defaults to 0,
@@ -446,6 +611,7 @@ enum MediaScope {
   PLAYER
   GAME
   TEAM
+  RECRUIT
 
   @@map("media_scope")
 }
@@ -508,9 +674,10 @@ model Media {
 
   // Subject anchor. Exactly one is set, matching `scope`. Deleting the subject
   // deletes its media.
-  playerId Int? @map("player_id")
-  gameId   Int? @map("game_id")
-  seasonId Int? @map("season_id")
+  playerId  Int? @map("player_id")
+  gameId    Int? @map("game_id")
+  seasonId  Int? @map("season_id")
+  recruitId Int? @map("recruit_id")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -519,6 +686,7 @@ model Media {
   player        Player?        @relation(fields: [playerId], references: [id], onDelete: Cascade)
   game          Game?          @relation(fields: [gameId], references: [id], onDelete: Cascade)
   season        Season?        @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  recruit       Recruit?       @relation(fields: [recruitId], references: [id], onDelete: Cascade)
   mediaEvent    MediaEvent?    @relation(fields: [mediaEventId], references: [id], onDelete: Cascade)
   tags          MediaTag[]
   socialReplies SocialReply[]
@@ -528,6 +696,7 @@ model Media {
   @@index([playerId])
   @@index([gameId])
   @@index([seasonId])
+  @@index([recruitId])
   @@index([mediaEventId])
   @@map("media")
 }
@@ -591,9 +760,10 @@ model MediaEvent {
   angle     String?
 
   // Subject anchor, matching `scope` (as on Media).
-  playerId Int? @map("player_id")
-  gameId   Int? @map("game_id")
-  seasonId Int? @map("season_id")
+  playerId  Int? @map("player_id")
+  gameId    Int? @map("game_id")
+  seasonId  Int? @map("season_id")
+  recruitId Int? @map("recruit_id")
 
   // The editor's added context. `personaIds` = which author personas to write as
   // (one piece each; empty = a single piece in the default voice). `playerIds` =
@@ -611,10 +781,11 @@ model MediaEvent {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  player Player? @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  game   Game?   @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  season Season? @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  media  Media[]
+  player  Player?  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  game    Game?    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  season  Season?  @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  recruit Recruit? @relation(fields: [recruitId], references: [id], onDelete: Cascade)
+  media   Media[]
 
   @@index([status])
   @@index([gameId])

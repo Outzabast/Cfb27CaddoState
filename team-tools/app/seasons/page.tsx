@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { createSeason, deleteSeason, advanceSeason, setSentimentBaseline } from "./actions";
+import { createSeason, deleteSeason, setSentimentBaseline } from "./actions";
 import { deriveBaseline, sentimentBand, type SentimentBand } from "@/lib/sentiment";
 import { ConfirmButton } from "@/components/confirm-button";
 import { SaveForm } from "@/components/save-form";
@@ -91,16 +91,12 @@ export default async function SeasonsHistoryPage() {
                   Current
                 </span>
               </div>
-              <SaveForm action={advanceSeason} loadingText="Advancing…" successText="Season advanced">
-                <input type="hidden" name="fromSeasonId" value={current.id} />
-                <ConfirmButton
-                  type="submit"
-                  size="sm"
-                  message={`Start the season after ${current.name}? Every player advances a class, seniors graduate, and the rest carry over.`}
-                >
-                  Advance from {current.name}
-                </ConfirmButton>
-              </SaveForm>
+              <Link
+                href={`/seasons/${current.id}/advance`}
+                className={buttonVariants({ size: "sm" })}
+              >
+                Advance from {current.name}
+              </Link>
             </div>
           </CardHeader>
           <CardContent className="space-y-5">

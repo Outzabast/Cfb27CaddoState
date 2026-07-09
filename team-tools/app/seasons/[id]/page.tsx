@@ -7,6 +7,9 @@ import { NewsTeaser } from "@/components/media/news-teaser";
 import { SocialFeed } from "@/components/media/social-feed";
 import { fetchSocialFeed } from "@/lib/media/social-feed";
 import { StaffSection } from "@/components/staff-section";
+import { FactGroup } from "@/components/media/fact-group";
+import { factsForScope } from "@/lib/media/facts";
+import { buttonVariants } from "@/components/ui/button";
 
 function result(t: number, o: number): "W" | "L" | "T" | null {
   if (t === 0 && o === 0) return null;
@@ -15,11 +18,14 @@ function result(t: number, o: number): "W" | "L" | "T" | null {
 
 export default async function SeasonHomePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ mode?: string }>;
 }) {
   const seasonId = Number((await params).id);
   if (!Number.isInteger(seasonId)) notFound();
+  const isEdit = (await searchParams).mode === "edit";
 
   const season = await db.season.findUnique({
     where: { id: seasonId },
@@ -56,6 +62,10 @@ export default async function SeasonHomePage({
   const record = ties > 0 ? `${wins}-${losses}-${ties}` : `${wins}-${losses}`;
   const playerCount = season.roster?._count.players ?? 0;
 
+  // TEAM facts are program-wide (global); editable here on the team home page.
+  const teamFacts = isEdit ? await factsForScope("TEAM", null) : [];
+  const basePath = `/seasons/${seasonId}`;
+
   return (
     <div className="space-y-8">
       {/* Team / season hero */}
@@ -71,14 +81,45 @@ export default async function SeasonHomePage({
               </h1>
             </div>
           </div>
-          <div className="flex gap-6">
+          <div className="flex items-center gap-6">
             <HeaderStat label="Record" value={record} />
             <HeaderStat label="PF" value={pointsFor} />
             <HeaderStat label="PA" value={pointsAgainst} />
+            <div className="flex flex-col gap-1.5">
+              <Link
+                href={`/seasons/edit/${seasonId}`}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                Edit season
+              </Link>
+              <Link
+                href={isEdit ? basePath : `${basePath}?mode=edit`}
+                className={buttonVariants({ variant: isEdit ? "outline" : "default", size: "sm" })}
+              >
+                {isEdit ? "Done" : "Edit team"}
+              </Link>
+            </div>
           </div>
         </div>
         <SeasonNav seasonId={seasonId} active="home" />
       </div>
+
+      {isEdit && (
+        <section className="space-y-3">
+          <h2 className="eyebrow !text-foreground">Team</h2>
+          <p className="text-sm text-muted-foreground">
+            Program-wide canon for the Lumberjacks — applies to every season&rsquo;s
+            media. (Uniforms and other team assets will live here too.)
+          </p>
+          <FactGroup
+            scope="TEAM"
+            title="Team facts"
+            blurb="Program canon: identity, culture, rivalries, home-field lore — the things always true of Caddo State."
+            facts={teamFacts}
+            revalidate={basePath}
+          />
+        </section>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Schedule */}

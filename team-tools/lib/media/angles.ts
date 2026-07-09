@@ -12,8 +12,8 @@ export type MediaAngle = {
   /** UI blurb for the new-post form. */
   blurb: string;
   /** Whether the subject picker chooses a played game, an upcoming game, a season,
-   *  or player(s). */
-  subject: "gamePlayed" | "gameUpcoming" | "season" | "players";
+   *  player(s), or a recruit. */
+  subject: "gamePlayed" | "gameUpcoming" | "season" | "players" | "recruit";
 };
 
 export const MEDIA_ANGLES: MediaAngle[] = [
@@ -52,6 +52,20 @@ export const MEDIA_ANGLES: MediaAngle[] = [
     blurb: "Who's banged up — written from injured players and their details.",
     subject: "season",
   },
+  {
+    slug: "recruiting",
+    label: "Recruiting profile",
+    scope: "RECRUIT",
+    blurb: "A prospect breakdown (HS or transfer) — stars, rankings, fit, and where they stand with us.",
+    subject: "recruit",
+  },
+  {
+    slug: "departure",
+    label: "Transfer portal — departure",
+    scope: "PLAYER",
+    blurb: "A player entering the transfer portal / leaving the program.",
+    subject: "players",
+  },
 ];
 
 const BY_SLUG = new Map(MEDIA_ANGLES.map((a) => [a.slug, a]));
@@ -62,5 +76,11 @@ export function angleBySlug(slug: string | null | undefined): MediaAngle | undef
 
 /** The default angle slug for a scope (used when an event has no explicit angle). */
 export function defaultAngleForScope(scope: MediaScope): string {
-  return scope === "GAME" ? "recap" : scope === "PLAYER" ? "feature" : "season";
+  return scope === "GAME"
+    ? "recap"
+    : scope === "PLAYER"
+      ? "feature"
+      : scope === "RECRUIT"
+        ? "recruiting"
+        : "season";
 }

@@ -23,6 +23,14 @@ export const TEAM_FACTS =
   "Never invent a different team name, nickname, city, stadium, or colors — if a " +
   "detail isn't provided, leave it out rather than guess.";
 
+/**
+ * Standing-fact importance (0–100) at/above which a fact is force-injected into
+ * every relevant piece (the STANDING CONTEXT block). Facts below this stay out of
+ * the prompt but are researchable via the list_facts tool — so the editorial
+ * archive can grow without bloating every generation's context.
+ */
+export const FACT_AUTOINJECT_THRESHOLD = 70;
+
 /** Fallback byline voice when no AuthorPersona is chosen/seeded. */
 export const DEFAULT_VOICE =
   "A college-football beat writer covering Caddo State. Writes a tight, " +
@@ -39,6 +47,7 @@ export const MEDIA_SCOPE_LABELS: Record<MediaScope, string> = {
   PLAYER: "Player",
   GAME: "Game",
   TEAM: "Team",
+  RECRUIT: "Recruit",
 };
 
 export const MEDIA_STATUS_LABELS: Record<MediaGenStatus, string> = {

@@ -175,6 +175,19 @@ export async function createManualEvent(formData: FormData) {
       context,
       personaIds,
     });
+  } else if (meta.subject === "recruit") {
+    // A recruiting profile on one prospect.
+    const recruitId = Number(formData.get("subjectId"));
+    if (!Number.isInteger(recruitId)) throw new Error("Choose a recruit.");
+    await postMediaEvent({
+      type: "MANUAL",
+      scope,
+      angle: meta.slug,
+      mediaType,
+      recruitId,
+      context,
+      personaIds,
+    });
   } else {
     const subjectId = Number(formData.get("subjectId"));
     if (!Number.isInteger(subjectId)) throw new Error("Choose a subject.");

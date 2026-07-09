@@ -13,6 +13,12 @@ import {
   mergeAggregate,
 } from "@/lib/stat-fields";
 import { computeRecord, formatRecord } from "@/lib/season-record";
+import {
+  RECRUIT_STATUS_LABELS,
+  formatRating,
+  formatHometown,
+  starString,
+} from "@/lib/recruits";
 
 const STAT_FIELDS = PLAYER_STAT_GROUPS.flatMap((g) => g.fields);
 function hasAnyStat(line: Record<string, number>): boolean {
@@ -44,6 +50,7 @@ export async function describeGame(gameId: number): Promise<string> {
       season: true,
       teamStats: true,
       playerStats: { include: { player: { select: { name: true } } } },
+      scoringPlays: { orderBy: { sortOrder: "asc" } },
     },
   });
   if (!game) throw new Error("Game not found.");
@@ -92,6 +99,17 @@ export async function describeGame(gameId: number): Promise<string> {
   if (focus.length) {
     out.push("");
     out.push(`Story focus (most noteworthy performances this game): ${focus.join(", ")}`);
+  }
+
+  if (game.scoringPlays.length) {
+    out.push("");
+    out.push("Scoring summary (how the game unfolded, in order):");
+    for (const p of game.scoringPlays) {
+      const who = p.team === "TEAM" ? "Caddo State" : game.opponent;
+      const q = p.quarter <= 4 ? `Q${p.quarter}` : "OT";
+      const clock = p.clock ? ` ${p.clock}` : "";
+      out.push(`  ${q}${clock} — ${who}: ${p.description}`);
+    }
   }
 
   if (game.teamStats) {
@@ -349,4 +367,55 @@ export function compactStatSummary(v: Record<string, number>): string {
   ];
   const nonzero = bits.filter(([, n]) => n && n !== 0).map(([k, n]) => `${n} ${k}`);
   return nonzero.length ? nonzero.join(", ") : "no counting stats";
+}
+
+/** A recruiting prospect's scouting brief: identity, 247-style ratings/rankings,
+ *  funnel status, and whether they've signed with us. */
+export async function describeRecruit(recruitId: number): Promise<string> {
+  const r = await db.recruit.findUnique({
+    where: { id: recruitId },
+    include: { season: { select: { name: true } }, player: { select: { id: true, name: true } } },
+  });
+  if (!r) throw new Error("Recruit not found.");
+
+  const out: string[] = [];
+  const kindLabel = r.kind === "TRANSFER" ? "Transfer portal prospect" : "High-school recruit";
+  out.push(`Recruit: ${r.name} — ${r.position} (${kindLabel})`);
+  out.push(`Recruiting class: ${r.season.name}`);
+  out.push(`Status with Caddo State: ${RECRUIT_STATUS_LABELS[r.status]}`);
+  if (r.kind === "TRANSFER") {
+    const bits = [
+      r.previousSchool ? `transferring from ${r.previousSchool}` : null,
+      r.eligibilityYears != null ? `${r.eligibilityYears} year(s) of eligibility left` : null,
+    ].filter(Boolean);
+    if (bits.length) out.push(`Transfer: ${bits.join(", ")}`);
+  }
+
+  const stars = r.stars > 0 ? `${starString(r.stars)} (${r.stars}-star)` : "unrated";
+  const rating = formatRating(r.rating);
+  out.push(`Rating: ${stars}${rating ? `, composite ${rating}` : ""}`);
+
+  const ranks: string[] = [];
+  if (r.nationalRank != null) ranks.push(`No. ${r.nationalRank} nationally`);
+  if (r.positionRank != null) ranks.push(`No. ${r.positionRank} at ${r.position}`);
+  if (r.stateRank != null) ranks.push(`No. ${r.stateRank} in state`);
+  if (ranks.length) out.push(`Rankings: ${ranks.join(", ")}`);
+
+  const physicals: string[] = [];
+  const height = formatHeight(r.heightInches);
+  if (height) physicals.push(height);
+  if (r.weightLbs) physicals.push(`${r.weightLbs} lbs`);
+  if (physicals.length) out.push(`Measurables: ${physicals.join(", ")}`);
+
+  const hometown = formatHometown(r.hometownCity, r.hometownState);
+  if (hometown || r.highSchool) {
+    out.push(`From: ${[r.highSchool, hometown].filter(Boolean).join(" · ")}`);
+  }
+  if (r.otherOffers) out.push(`Other offers / interest: ${r.otherOffers}`);
+  if (r.committedAt) out.push(`Committed on: ${r.committedAt.toISOString().slice(0, 10)}`);
+  if (r.player) out.push(`SIGNED with us — now on the roster as ${r.player.name} (playerId ${r.player.id}).`);
+  if (r.bio) out.push(`\nScouting bio: ${r.bio}`);
+  if (r.notes) out.push(`\nStaff notes: ${r.notes}`);
+
+  return out.join("\n");
 }
