@@ -19,8 +19,17 @@ import { fetchSocialFeedPage } from "@/lib/media/social-feed";
 import { fetchAudioFeed } from "@/lib/media/audio-feed";
 import { db } from "@/lib/db";
 import { cn } from "@/lib/utils";
+import type { MediaScope } from "@/generated/prisma/enums";
 
 export const dynamic = "force-dynamic";
+
+// Article categories on the Articles tab; each loads/paginates independently.
+const ARTICLE_CATS: { key: string; label: string; scope?: MediaScope }[] = [
+  { key: "all", label: "All" },
+  { key: "games", label: "Games", scope: "GAME" },
+  { key: "team", label: "Team", scope: "TEAM" },
+  { key: "players", label: "Players", scope: "PLAYER" },
+];
 
 const selectClass =
   "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
@@ -37,7 +46,7 @@ type SectionKey = (typeof SECTIONS)[number]["key"];
 export default async function MediaHubPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; view?: string; season?: string }>;
+  searchParams: Promise<{ section?: string; view?: string; season?: string; cat?: string }>;
 }) {
   const sp = await searchParams;
   const section: SectionKey =
@@ -56,62 +65,88 @@ export default async function MediaHubPage({
   } else if (section === "audio") {
     content = <AudioFeed posts={await fetchAudioFeed()} />;
   } else {
-    const seasonId = sp.season ? Number(sp.season) : NaN;
+    // Article categories — each is its OWN scoped query, so All / Games / Team /
+    // Players load their own content and paginate independently.
+    const cat = ARTICLE_CATS.some((c) => c.key === sp.cat) ? (sp.cat as string) : "all";
+    const scope = ARTICLE_CATS.find((c) => c.key === cat)?.scope;
+    const seasonNum = sp.season ? Number(sp.season) : NaN;
+    const seasonId = Number.isInteger(seasonNum) ? seasonNum : undefined;
+
     const query: MediaQuery = unviewedOnly
       ? { kind: "unviewed" }
-      : Number.isInteger(seasonId)
-        ? { kind: "season", seasonId }
-        : { kind: "all" };
+      : { kind: "articles", scope, seasonId };
+
     const [page, seasons] = await Promise.all([
       fetchMediaPage(query, 10, null),
       db.season.findMany({ orderBy: { startYear: "desc" }, select: { id: true, name: true } }),
     ]);
-    const inbox =
-      unviewedOnly && page.items.length === 0 ? (
-        <div className="rounded-md border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
-          You&rsquo;re all caught up — nothing unread.{" "}
-          <Link href="/media" className="font-medium text-primary hover:underline">
-            View all articles
-          </Link>
-        </div>
-      ) : (
-        <MediaInbox initialItems={page.items} initialCursor={page.nextCursor} query={query} />
-      );
+    // key remounts the inbox (fresh page state) when the category/season changes.
+    const inboxKey = `${cat}-${sp.season ?? ""}-${unviewedOnly}`;
+
     content = (
       <div className="space-y-4">
         {!unviewedOnly && (
-          <form method="get" className="flex flex-wrap items-end gap-2">
-            <input type="hidden" name="section" value="articles" />
-            <div className="grid gap-1">
-              <label htmlFor="season" className="text-xs text-muted-foreground">
-                Season
-              </label>
-              <select id="season" name="season" defaultValue={sp.season ?? ""} className={selectClass}>
-                <option value="">All seasons</option>
-                {seasons.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+          <>
+            {/* Article categories */}
+            <div className="flex flex-wrap gap-1 border-b">
+              {ARTICLE_CATS.map((c) => {
+                const params = new URLSearchParams({ section: "articles", cat: c.key });
+                if (sp.season) params.set("season", sp.season);
+                return (
+                  <Link
+                    key={c.key}
+                    href={`/media?${params.toString()}`}
+                    className={cn(
+                      "-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2 pt-1 text-xs font-bold uppercase tracking-wide transition-colors",
+                      cat === c.key
+                        ? "border-[var(--brand-gold)] text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {c.label}
+                  </Link>
+                );
+              })}
             </div>
-            <button
-              type="submit"
-              className="h-9 rounded-md border px-3 text-sm font-medium hover:bg-accent"
-            >
-              Filter
-            </button>
-            {sp.season && (
-              <Link
-                href="/media?section=articles"
-                className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
-              >
-                Clear
-              </Link>
-            )}
-          </form>
+
+            {/* Season filter (keeps the current category) */}
+            <form method="get" className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="section" value="articles" />
+              <input type="hidden" name="cat" value={cat} />
+              <div className="grid gap-1">
+                <label htmlFor="season" className="text-xs text-muted-foreground">Season</label>
+                <select id="season" name="season" defaultValue={sp.season ?? ""} className={selectClass}>
+                  <option value="">All seasons</option>
+                  {seasons.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button type="submit" className="h-9 rounded-md border px-3 text-sm font-medium hover:bg-accent">
+                Filter
+              </button>
+              {sp.season && (
+                <Link
+                  href={`/media?section=articles&cat=${cat}`}
+                  className="pb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                >
+                  Clear
+                </Link>
+              )}
+            </form>
+          </>
         )}
-        {inbox}
+
+        {unviewedOnly && page.items.length === 0 ? (
+          <div className="rounded-md border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
+            You&rsquo;re all caught up — nothing unread.{" "}
+            <Link href="/media" className="font-medium text-primary hover:underline">
+              View all articles
+            </Link>
+          </div>
+        ) : (
+          <MediaInbox key={inboxKey} initialItems={page.items} initialCursor={page.nextCursor} query={query} />
+        )}
       </div>
     );
   }

@@ -4,6 +4,7 @@
 
 import { db } from "@/lib/db";
 import type { MediaListItem } from "@/components/media/media-inbox";
+import type { MediaScope } from "@/generated/prisma/enums";
 
 const dateFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 
@@ -84,6 +85,7 @@ export function clampPageSize(n: unknown): number {
  *  boundary and back into the load-more server action. */
 export type MediaQuery =
   | { kind: "all" }
+  | { kind: "articles"; scope?: MediaScope; seasonId?: number }
   | { kind: "unviewed" }
   | { kind: "images" }
   | { kind: "season"; seasonId: number }
@@ -91,6 +93,16 @@ export type MediaQuery =
 
 function whereFor(q: MediaQuery) {
   switch (q.kind) {
+    case "articles": {
+      // Articles, optionally narrowed to a scope (Games/Team/Players) and/or a
+      // season — each media-page category runs this with its own cursor.
+      const w: Record<string, unknown> = { mediaType: "ARTICLE" as const };
+      if (q.scope) w.scope = q.scope;
+      if (q.seasonId != null) {
+        w.OR = [{ seasonId: q.seasonId }, { game: { seasonId: q.seasonId } }];
+      }
+      return w;
+    }
     case "unviewed":
       return { mediaType: "ARTICLE" as const, viewed: false, status: "READY" as const };
     case "images":
