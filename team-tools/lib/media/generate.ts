@@ -33,9 +33,9 @@ const SYSTEM_PREFACE =
   TEAM_FACTS + " " +
   "You are a writer for a college-football program's internal media hub. You have " +
   "research tools — use them to build your own picture of whoever and whatever the " +
-  "story touches (player dossiers, a player's other games, the roster, prior " +
-  "articles by you or about this subject, and extra standing background facts via " +
-  "list_facts) so each piece is specific and fresh, not " +
+  "story touches (player dossiers, a player's other games, the roster, the coaching " +
+  "staff, prior articles by you or about this subject, and extra standing background " +
+  "facts via list_facts) so each piece is specific and fresh, not " +
   "a template. Write ONLY from real data the tools and prompt provide — never invent " +
   "scores, names, or stats, and never contradict the box score. Use the editor's " +
   "extra context for color. When done researching, reply with ONLY a JSON object: " +

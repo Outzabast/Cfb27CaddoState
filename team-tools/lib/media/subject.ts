@@ -19,6 +19,7 @@ import {
   formatHometown,
   starString,
 } from "@/lib/recruits";
+import { STAFF_ROLE_LABELS, STAFF_ROLES } from "@/lib/staff";
 
 const STAT_FIELDS = PLAYER_STAT_GROUPS.flatMap((g) => g.fields);
 function hasAnyStat(line: Record<string, number>): boolean {
@@ -39,6 +40,21 @@ function lineToText(l: BoxLine): string {
     parts.push(`${cat.title}: ${cells}`);
   }
   return parts.join(" | ");
+}
+
+/** The season's coaching staff as a brief block (null when none set). Staff carry
+ *  ids so the writer can pull a full dossier with get_staff, just like players. */
+async function describeStaff(seasonId: number): Promise<string | null> {
+  const staff = await db.seasonStaff.findMany({
+    where: { seasonId },
+    select: { staffId: true, staffName: true, role: true, seasonNotoriety: true },
+  });
+  if (!staff.length) return null;
+  const ordered = [...staff].sort((a, b) => STAFF_ROLES.indexOf(a.role) - STAFF_ROLES.indexOf(b.role));
+  const lines = ordered.map(
+    (s) => `  ${STAFF_ROLE_LABELS[s.role]}: ${s.staffName} (staffId ${s.staffId})`,
+  );
+  return ["Coaching staff:", ...lines].join("\n");
 }
 
 /** A game recap's data: scoreboard, team comparison, and every player who did
@@ -100,6 +116,12 @@ export async function describeGame(gameId: number): Promise<string> {
   if (focus.length) {
     out.push("");
     out.push(`Story focus (most noteworthy performances this game): ${focus.join(", ")}`);
+  }
+
+  const staffBlock = await describeStaff(game.seasonId);
+  if (staffBlock) {
+    out.push("");
+    out.push(staffBlock);
   }
 
   if (game.scoringPlays.length) {
@@ -254,6 +276,13 @@ export async function describeSeason(seasonId: number): Promise<string> {
   const out: string[] = [];
   out.push(`TEAM / SEASON STORY — Caddo State, ${season.name}`);
   out.push(`Record: ${w}-${l}${t ? `-${t}` : ""}`);
+
+  const staffBlock = await describeStaff(seasonId);
+  if (staffBlock) {
+    out.push("");
+    out.push(staffBlock);
+  }
+
   out.push("");
   out.push("Results:");
   for (const g of season.games) {

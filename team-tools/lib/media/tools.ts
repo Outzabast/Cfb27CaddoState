@@ -18,6 +18,7 @@ import {
 } from "./subject";
 import { researchFacts } from "./facts";
 import { RECRUIT_STATUS_LABELS } from "@/lib/recruits";
+import { STAFF_ROLE_LABELS, STAFF_ROLES } from "@/lib/staff";
 import type { ToolSchema } from "./openrouter";
 import type { FactScope, RecruitStatus } from "@/generated/prisma/enums";
 
@@ -106,6 +107,32 @@ export const MEDIA_TOOLS: ToolSchema[] = [
         type: "object",
         properties: { seasonId: { type: "integer" } },
         required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_staff",
+      description:
+        "The coaching staff for a season (by seasonId): head coach + coordinators, with their role and that season's notoriety. Use to attribute strategy, culture, and results to the people running the program.",
+      parameters: {
+        type: "object",
+        properties: { seasonId: { type: "integer" } },
+        required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_staff",
+      description:
+        "Full dossier on one staff member: bio, program-wide notoriety, and their role season-by-season (tenure/history). Use for a coach feature or to ground how long they've been here.",
+      parameters: {
+        type: "object",
+        properties: { staffId: { type: "integer" } },
+        required: ["staffId"],
       },
     },
   },
@@ -354,6 +381,47 @@ async function listArticles(args: {
   };
 }
 
+async function listStaff(seasonId: number) {
+  const rows = await db.seasonStaff.findMany({
+    where: { seasonId },
+    select: { staffId: true, staffName: true, role: true, seasonNotoriety: true },
+  });
+  const ordered = [...rows].sort((a, b) => STAFF_ROLES.indexOf(a.role) - STAFF_ROLES.indexOf(b.role));
+  return {
+    staff: ordered.map((s) => ({
+      staffId: s.staffId,
+      name: s.staffName,
+      role: STAFF_ROLE_LABELS[s.role],
+      seasonNotoriety: s.seasonNotoriety,
+    })),
+  };
+}
+
+async function getStaff(staffId: number) {
+  const staff = await db.staff.findUnique({
+    where: { id: staffId },
+    include: {
+      seasonStaff: {
+        include: { season: { select: { name: true, startYear: true } } },
+        orderBy: { season: { startYear: "desc" } },
+      },
+    },
+    omit: { photo: true },
+  });
+  if (!staff) return { error: "Staff member not found." };
+  return {
+    id: staff.id,
+    name: staff.name,
+    bio: staff.bio ?? null,
+    overallNotoriety: staff.overallNotoriety,
+    history: staff.seasonStaff.map((ss) => ({
+      season: ss.season.name,
+      role: STAFF_ROLE_LABELS[ss.role],
+      seasonNotoriety: ss.seasonNotoriety,
+    })),
+  };
+}
+
 async function findRecruits(query: string) {
   const q = query.trim();
   if (!q) return { recruits: [] };
@@ -432,6 +500,16 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
       case "list_roster": {
         const id = int(args.seasonId);
         result = id == null ? { error: "seasonId required." } : await listRoster(id);
+        break;
+      }
+      case "list_staff": {
+        const id = int(args.seasonId);
+        result = id == null ? { error: "seasonId required." } : await listStaff(id);
+        break;
+      }
+      case "get_staff": {
+        const id = int(args.staffId);
+        result = id == null ? { error: "staffId required." } : await getStaff(id);
         break;
       }
       case "list_articles":
