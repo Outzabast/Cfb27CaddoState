@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { postMediaEvent } from "@/lib/media/media-space";
+import { postMediaEvent, readIdList } from "@/lib/media/media-space";
 import { parseRecruitStatus, parseRecruitKind, parseStars, formatHometown } from "@/lib/recruits";
 import { isValidClass } from "@/lib/classes";
 import type { PlayerClass } from "@/generated/prisma/enums";
@@ -204,7 +204,7 @@ export async function signRecruit(formData: FormData) {
   revalidatePath("/players");
 }
 
-/** Fire off a recruiting profile for this recruit (default voice). */
+/** Fire off a recruiting profile for this recruit, in the chosen persona voices. */
 export async function generateRecruitMedia(formData: FormData) {
   const id = Number(formData.get("id"));
   if (!Number.isInteger(id)) throw new Error("Bad recruit id.");
@@ -217,6 +217,7 @@ export async function generateRecruitMedia(formData: FormData) {
     mediaType: "ARTICLE",
     recruitId: id,
     context,
+    personaIds: readIdList(formData, "mediaPersonaId"),
   });
   revalidatePath("/media");
   revalidatePath("/media/space");

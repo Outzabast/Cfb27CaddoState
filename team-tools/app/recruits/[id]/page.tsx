@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { SaveForm } from "@/components/save-form";
 import { ConfirmSubmit } from "@/components/media/confirm-submit";
 import { RecruitForm } from "@/components/recruit-form";
+import { PersonaSelect } from "@/components/media/persona-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,6 +59,12 @@ export default async function RecruitProfilePage({
     db.season.findMany({ orderBy: { startYear: "desc" }, select: { id: true, name: true } }),
   ]);
   if (!recruit) notFound();
+
+  const personas = await db.authorPersona.findMany({
+    where: { active: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
 
   const hometown = formatHometown(recruit.hometownCity, recruit.hometownState);
   const rating = formatRating(recruit.rating);
@@ -217,6 +224,12 @@ export default async function RecruitProfilePage({
               placeholder="Anything the ratings miss — visit buzz, position switch, film notes…"
               className={textareaClass}
             />
+            <div className="grid gap-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Written by
+              </span>
+              <PersonaSelect personas={personas} />
+            </div>
             <Button type="submit" size="sm" variant="secondary">Write profile</Button>
           </SaveForm>
         </div>
