@@ -14,7 +14,11 @@ import {
   type OcrPlayerStatLine,
   type OcrScoringPlay,
   type OcrScoreboard,
+  type OcrRecruitRow,
+  type OcrPlay,
 } from "./kinds";
+import { nameKey } from "./name-match";
+import { playMergeKey } from "@/lib/play-by-play";
 
 const MAX_POSITION_LEN = 8;
 
@@ -97,11 +101,16 @@ function normalizeRoster(raw: unknown): OcrRosterRow[] {
     const name = cleanString(o.name);
     const position = cleanPosition(o.position);
     if (!name && !position) continue;
+    const { city, state } = splitHometown(o.hometown);
     rows.push({
       name,
       position,
       class: o.class == null ? null : normalizeClass(String(o.class)),
       number: toIntOrNull(o.number),
+      heightInches: heightToInches(o.height),
+      weightLbs: toIntOrNull(o.weightLbs),
+      hometownCity: city,
+      hometownState: state,
     });
   }
   return rows;
@@ -165,6 +174,10 @@ function normalizePlayerStats(raw: unknown): OcrPlayerStatLine[] {
 
 const CLOCK_RE = /^\d{1,2}:\d{2}$/;
 
+/** A dedupe key for a timed play across overlapping screenshots. Delegates to the
+ *  shared key so the clock's leading zero ("09:27" vs "9:27") never splits a play. */
+const playKey = playMergeKey;
+
 function normalizeScoringPlays(raw: unknown): OcrScoringPlay[] {
   const plays = asArray((raw as { plays?: unknown })?.plays);
   const out: OcrScoringPlay[] = [];
@@ -188,6 +201,117 @@ function normalizeScoringPlays(raw: unknown): OcrScoringPlay[] {
   return out;
 }
 
+/** Parse a height into inches from "6'6\"", "6-6", or a plain inch count. */
+function heightToInches(raw: unknown): number | null {
+  const s = cleanString(raw);
+  if (!s) return null;
+  const m = s.match(/(\d+)\s*['\-\s]\s*(\d+)/);
+  if (m) return Number(m[1]) * 12 + Number(m[2]);
+  const n = toIntOrNull(s);
+  return n !== null && n > 0 ? n : null;
+}
+
+/** Split "New Orleans, LA" into [city, state]; a lone value is treated as city. */
+function splitHometown(raw: unknown): { city: string | null; state: string | null } {
+  const s = cleanString(raw);
+  if (!s) return { city: null, state: null };
+  const i = s.lastIndexOf(",");
+  if (i === -1) return { city: s, state: null };
+  return { city: s.slice(0, i).trim() || null, state: s.slice(i + 1).trim() || null };
+}
+
+function normalizeRecruits(raw: unknown): OcrRecruitRow[] {
+  const rows = asArray((raw as { recruits?: unknown })?.recruits);
+  const out: OcrRecruitRow[] = [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    const o = r as Record<string, unknown>;
+    const name = cleanString(o.name);
+    const position = cleanPosition(o.position);
+    if (!name && !position) continue;
+    const stars = toIntOrNull(o.stars);
+    const { city, state } = splitHometown(o.hometown);
+    out.push({
+      name,
+      position,
+      kind: String(o.kind ?? "").toUpperCase() === "TRANSFER" ? "TRANSFER" : "HIGH_SCHOOL",
+      stars: stars === null ? null : Math.min(5, Math.max(0, stars)),
+      nationalRank: toIntOrNull(o.nationalRank),
+      stateRank: toIntOrNull(o.stateRank),
+      positionRank: toIntOrNull(o.positionRank),
+      heightInches: heightToInches(o.height),
+      weightLbs: toIntOrNull(o.weightLbs),
+      hometownCity: city,
+      hometownState: state,
+      previousSchool: cleanString(o.previousSchool) || null,
+      signed: o.signed === true,
+    });
+  }
+  return out;
+}
+
+/** Merge two reads of the same prospect: keep the longer name, fill null fields. */
+function mergeRecruit(a: OcrRecruitRow, b: OcrRecruitRow): OcrRecruitRow {
+  const pick = <T,>(x: T | null, y: T | null): T | null => (x ?? null) !== null ? x : y;
+  return {
+    name: b.name.length > a.name.length ? b.name : a.name,
+    position: a.position || b.position,
+    kind: a.kind === "TRANSFER" || b.kind === "TRANSFER" ? "TRANSFER" : "HIGH_SCHOOL",
+    stars: pick(a.stars, b.stars),
+    nationalRank: pick(a.nationalRank, b.nationalRank),
+    stateRank: pick(a.stateRank, b.stateRank),
+    positionRank: pick(a.positionRank, b.positionRank),
+    heightInches: pick(a.heightInches, b.heightInches),
+    weightLbs: pick(a.weightLbs, b.weightLbs),
+    hometownCity: pick(a.hometownCity, b.hometownCity),
+    hometownState: pick(a.hometownState, b.hometownState),
+    previousSchool: pick(a.previousSchool, b.previousSchool),
+    signed: a.signed || b.signed,
+  };
+}
+
+const OCR_PLAY_TYPES = new Set<string>([
+  "scrimmage", "touchdown", "extra_point", "extra_point_missed", "two_point",
+  "two_point_failed", "field_goal", "field_goal_missed", "safety", "punt",
+  "interception", "fumble", "turnover_on_downs", "kickoff", "penalty", "kneel",
+  "end_period", "other",
+]);
+
+/** "team"/"opp"/null (null = unknown → the importer carries the last team forward). */
+function toSide(v: unknown): "team" | "opp" | null {
+  const s = String(v ?? "").toLowerCase();
+  if (s === "team") return "team";
+  if (s === "opp") return "opp";
+  return null;
+}
+
+function normalizePlays(raw: unknown): OcrPlay[] {
+  const plays = asArray((raw as { plays?: unknown })?.plays);
+  const out: OcrPlay[] = [];
+  for (const p of plays) {
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    const description = cleanString(o.description);
+    if (!description) continue;
+    let quarter = toIntOrNull(o.quarter);
+    if (quarter !== null && (quarter < 1 || quarter > 10)) quarter = null;
+    const clock = cleanString(o.clock);
+    const pt = String(o.playType ?? "").toLowerCase();
+    const pts = toIntOrNull(o.points);
+    out.push({
+      quarter,
+      clock: CLOCK_RE.test(clock) ? clock : null,
+      team: toSide(o.team),
+      situation: cleanString(o.situation) || null,
+      description,
+      playType: OCR_PLAY_TYPES.has(pt) ? (pt as OcrPlay["playType"]) : null,
+      points: pts != null && pts >= 0 ? pts : null,
+      scoringTeam: toSide(o.scoringTeam),
+    });
+  }
+  return out;
+}
+
 /**
  * Merge normalized results from multiple OCR batches (each batch = its own model
  * request over ≤8 images) into one, so a big import can be split across calls for
@@ -201,17 +325,32 @@ export function mergeOcrResults(parts: OcrResult[]): OcrResult {
 
   switch (first.kind) {
     case "roster": {
-      const rows: OcrRosterRow[] = [];
-      const seen = new Set<string>();
+      const pick = <T,>(x: T | null, y: T | null): T | null => (x ?? null) !== null ? x : y;
+      const byKey = new Map<string, OcrRosterRow>();
+      const order: string[] = [];
+      let anon = 0;
       for (const p of parts as Extract<OcrResult, { kind: "roster" }>[]) {
         for (const r of p.rows) {
-          const key = r.name.trim().toLowerCase();
-          if (key && seen.has(key)) continue;
-          if (key) seen.add(key);
-          rows.push(r);
+          const key = r.name ? nameKey(r.name) : `__anon_${anon++}`;
+          const ex = byKey.get(key);
+          if (ex) {
+            byKey.set(key, {
+              name: r.name.length > ex.name.length ? r.name : ex.name,
+              position: ex.position || r.position,
+              class: ex.class ?? r.class,
+              number: pick(ex.number, r.number),
+              heightInches: pick(ex.heightInches, r.heightInches),
+              weightLbs: pick(ex.weightLbs, r.weightLbs),
+              hometownCity: pick(ex.hometownCity, r.hometownCity),
+              hometownState: pick(ex.hometownState, r.hometownState),
+            });
+          } else {
+            byKey.set(key, r);
+            order.push(key);
+          }
         }
       }
-      return { kind: "roster", rows };
+      return { kind: "roster", rows: order.map((k) => byKey.get(k)!) };
     }
     case "schedule": {
       const rows: OcrScheduleRow[] = [];
@@ -264,7 +403,7 @@ export function mergeOcrResults(parts: OcrResult[]): OcrResult {
       let scoreboard: OcrScoreboard | null = null;
       for (const p of parts as Extract<OcrResult, { kind: "scoringSummary" }>[]) {
         for (const play of p.plays) {
-          const key = `${play.quarter}|${play.clock}|${play.description.toLowerCase()}`;
+          const key = playKey(play.quarter, play.clock, play.description);
           if (seen.has(key)) continue;
           seen.add(key);
           plays.push(play);
@@ -272,6 +411,38 @@ export function mergeOcrResults(parts: OcrResult[]): OcrResult {
         if (p.scoreboard) scoreboard = { ...(scoreboard ?? {}), ...p.scoreboard };
       }
       return { kind: "scoringSummary", plays, scoreboard };
+    }
+    case "recruits": {
+      // Reconcile list rows with detail cards by first-initial + surname, so an
+      // abbreviated "S. Rozeboom" folds into the full "Shaun Rozeboom".
+      const byKey = new Map<string, OcrRecruitRow>();
+      const order: string[] = [];
+      let anon = 0;
+      for (const p of parts as Extract<OcrResult, { kind: "recruits" }>[]) {
+        for (const r of p.rows) {
+          const key = r.name ? nameKey(r.name) : `__anon_${anon++}`;
+          const existing = byKey.get(key);
+          if (existing) byKey.set(key, mergeRecruit(existing, r));
+          else {
+            byKey.set(key, r);
+            order.push(key);
+          }
+        }
+      }
+      return { kind: "recruits", rows: order.map((k) => byKey.get(k)!) };
+    }
+    case "playByPlay": {
+      const plays: OcrPlay[] = [];
+      const seen = new Set<string>();
+      for (const p of parts as Extract<OcrResult, { kind: "playByPlay" }>[]) {
+        for (const play of p.plays) {
+          const key = playKey(play.quarter, play.clock, play.description);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          plays.push(play);
+        }
+      }
+      return { kind: "playByPlay", plays };
     }
   }
 }
@@ -298,5 +469,9 @@ export function normalizeResult(kind: OcrKind, raw: unknown): OcrResult {
         plays: normalizeScoringPlays(raw),
         scoreboard: normalizeScoreboard((raw as { scoreboard?: unknown })?.scoreboard),
       };
+    case "recruits":
+      return { kind, rows: normalizeRecruits(raw) };
+    case "playByPlay":
+      return { kind, plays: normalizePlays(raw) };
   }
 }

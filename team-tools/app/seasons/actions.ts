@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { advanceClass, INACTIVE_CLASSES, isValidClass } from "@/lib/classes";
 import { recomputeAllSentiment } from "@/lib/sentiment";
+import { recomputeAll } from "@/lib/notoriety";
+import { recordRosterEvent } from "@/lib/roster-events";
 import type { PlayerClass } from "@/generated/prisma/enums";
 
 /** Collect a repeated integer form field (checkbox group). */
@@ -109,6 +111,7 @@ export async function commitAdvance(formData: FormData) {
   if (!Number.isInteger(fromSeasonId)) throw new Error("Bad season id.");
 
   const departing = new Set(idList(formData, "departingPlayerId"));
+  const departingStaff = new Set(idList(formData, "departingStaffId"));
   const enrollRecruitIds = idList(formData, "enrollRecruitId");
   const enrollClass = (id: number): PlayerClass => {
     const raw = String(formData.get(`class_${id}`) ?? "FRESHMAN");
@@ -122,7 +125,7 @@ export async function commitAdvance(formData: FormData) {
   const newSeasonId = await db.$transaction(async (tx) => {
     const prev = await tx.season.findUniqueOrThrow({
       where: { id: fromSeasonId },
-      include: { roster: { include: { players: true } } },
+      include: { roster: { include: { players: true } }, staff: true },
     });
 
     const startYear = prev.startYear + 1;
@@ -141,6 +144,11 @@ export async function commitAdvance(formData: FormData) {
       const graduates = INACTIVE_CLASSES.includes(nextClass);
       if (graduates || departing.has(sp.playerId)) {
         leaving.push(sp.playerId);
+        await recordRosterEvent(tx, {
+          playerId: sp.playerId,
+          seasonId: fromSeasonId,
+          type: graduates ? "GRADUATED" : "TRANSFERRED_OUT",
+        });
         continue;
       }
       await tx.seasonPlayer.create({
@@ -156,6 +164,21 @@ export async function commitAdvance(formData: FormData) {
     }
     if (leaving.length) {
       await tx.player.updateMany({ where: { id: { in: leaving } }, data: { status: "POSTACTIVE" } });
+    }
+
+    // Coaching staff carries forward too (same coach, same role) unless marked as
+    // departing. Season notoriety resets — it's per-season and gets recomputed.
+    for (const ss of prev.staff) {
+      if (departingStaff.has(ss.staffId)) continue;
+      await tx.seasonStaff.create({
+        data: {
+          seasonId: next.id,
+          staffId: ss.staffId,
+          staffName: ss.staffName,
+          role: ss.role,
+          seasonNotoriety: 0,
+        },
+      });
     }
 
     // Enroll the selected signees of the finishing cycle onto the new roster.
@@ -187,6 +210,12 @@ export async function commitAdvance(formData: FormData) {
           },
         });
         await tx.recruit.update({ where: { id: r.id }, data: { playerId: player.id, status: "ENROLLED" } });
+        await recordRosterEvent(tx, {
+          playerId: player.id,
+          seasonId: next.id,
+          type: r.kind === "TRANSFER" ? "JOINED_TRANSFER" : "JOINED_RECRUIT",
+          counterparty: r.kind === "TRANSFER" ? r.previousSchool : null,
+        });
       }
     }
 
@@ -194,6 +223,7 @@ export async function commitAdvance(formData: FormData) {
   });
 
   after(() => recomputeAllSentiment());
+  after(() => recomputeAll()); // seeds season carry-in for the new roster + staff
   revalidatePath("/seasons");
   revalidatePath("/players");
   redirect(`/seasons/${newSeasonId}/roster`);

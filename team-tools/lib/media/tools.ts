@@ -17,6 +17,7 @@ import {
   describeSeason,
 } from "./subject";
 import { researchFacts } from "./facts";
+import { PRESS_TYPE_LABELS } from "./press-conference";
 import { RECRUIT_STATUS_LABELS } from "@/lib/recruits";
 import { STAFF_ROLE_LABELS, STAFF_ROLES } from "@/lib/staff";
 import type { ToolSchema } from "./openrouter";
@@ -78,6 +79,19 @@ export const MEDIA_TOOLS: ToolSchema[] = [
       name: "get_game",
       description:
         "A game's full box score: score by quarter, team totals, every Caddo State player's line, and the notoriety 'story focus'.",
+      parameters: {
+        type: "object",
+        properties: { gameId: { type: "integer" } },
+        required: ["gameId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_play_by_play",
+      description:
+        "A game's full ordered play-by-play: every play with its quarter, clock, possessing team, down & distance, and description. Use for precise sequential recall — key plays, momentum swings, exactly how a drive ended.",
       parameters: {
         type: "object",
         properties: { gameId: { type: "integer" } },
@@ -207,6 +221,36 @@ export const MEDIA_TOOLS: ToolSchema[] = [
           },
         },
         required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_press_conferences",
+      description:
+        "Published press conferences you can QUOTE FROM — real answers a player or coach actually gave. Filter by game, season, player, or staff to find relevant ones for this piece. Returns id, who spoke, the occasion, and how many quotes are available.",
+      parameters: {
+        type: "object",
+        properties: {
+          gameId: { type: "integer" },
+          seasonId: { type: "integer" },
+          playerId: { type: "integer" },
+          staffId: { type: "integer" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_press_conference",
+      description:
+        "The full Q&A of one press conference by id: each reporter's question and the subject's verbatim answer. Use these as real, attributable quotes in any piece.",
+      parameters: {
+        type: "object",
+        properties: { pressConferenceId: { type: "integer" } },
+        required: ["pressConferenceId"],
       },
     },
   },
@@ -381,6 +425,26 @@ async function listArticles(args: {
   };
 }
 
+async function getPlayByPlay(gameId: number) {
+  const plays = await db.gamePlay.findMany({
+    where: { gameId },
+    orderBy: { sortOrder: "asc" },
+    select: { quarter: true, clock: true, team: true, situation: true, description: true },
+  });
+  if (!plays.length) return { plays: [] };
+  const game = await db.game.findUnique({ where: { id: gameId }, select: { opponent: true } });
+  const opp = game?.opponent ?? "Opponent";
+  return {
+    plays: plays.map((p) => ({
+      quarter: p.quarter,
+      clock: p.clock,
+      offense: p.team === "TEAM" ? "Caddo State" : opp,
+      situation: p.situation,
+      description: p.description,
+    })),
+  };
+}
+
 async function listStaff(seasonId: number) {
   const rows = await db.seasonStaff.findMany({
     where: { seasonId },
@@ -460,6 +524,60 @@ async function listRecruits(seasonId: number, status?: RecruitStatus) {
   };
 }
 
+async function listPressConferences(args: {
+  gameId?: unknown;
+  seasonId?: unknown;
+  playerId?: unknown;
+  staffId?: unknown;
+}) {
+  const where: Record<string, number> = {};
+  const g = int(args.gameId), s = int(args.seasonId), p = int(args.playerId), st = int(args.staffId);
+  if (g != null) where.gameId = g;
+  if (s != null) where.seasonId = s;
+  if (p != null) where.playerId = p;
+  if (st != null) where.staffId = st;
+
+  const rows = await db.pressConference.findMany({
+    where: { ...where, status: "DONE" },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    include: {
+      player: { select: { name: true } },
+      staff: { select: { name: true } },
+      game: { select: { opponent: true } },
+      season: { select: { name: true } },
+      _count: { select: { questions: { where: { answer: { not: null } } } } },
+    },
+  });
+  return {
+    pressConferences: rows.map((c) => ({
+      id: c.id,
+      speaker: c.player?.name ?? c.staff?.name ?? "Caddo State",
+      type: PRESS_TYPE_LABELS[c.type],
+      occasion: c.game ? `vs ${c.game.opponent}` : c.season ? c.season.name : null,
+      quotes: c._count.questions,
+    })),
+  };
+}
+
+async function getPressConference(id: number) {
+  const conf = await db.pressConference.findUnique({
+    where: { id },
+    include: {
+      player: { select: { name: true } },
+      staff: { select: { name: true } },
+      questions: { where: { answer: { not: null } }, orderBy: { order: "asc" } },
+    },
+  });
+  if (!conf) return { error: "Press conference not found." };
+  const speaker = conf.player?.name ?? conf.staff?.name ?? "Caddo State";
+  return {
+    speaker,
+    type: PRESS_TYPE_LABELS[conf.type],
+    quotes: conf.questions.map((q) => ({ reporter: q.personaName, question: q.question, answer: q.answer })),
+  };
+}
+
 async function getArticle(mediaId: number) {
   const m = await db.media.findUnique({
     where: { id: mediaId },
@@ -495,6 +613,11 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
       case "get_season": {
         const id = int(args.seasonId);
         result = id == null ? { error: "seasonId required." } : { overview: await describeSeason(id) };
+        break;
+      }
+      case "get_play_by_play": {
+        const id = int(args.gameId);
+        result = id == null ? { error: "gameId required." } : await getPlayByPlay(id);
         break;
       }
       case "list_roster": {
@@ -535,6 +658,14 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
           ? (statusRaw as RecruitStatus)
           : undefined;
         result = id == null ? { error: "seasonId required." } : await listRecruits(id, status);
+        break;
+      }
+      case "list_press_conferences":
+        result = await listPressConferences(args);
+        break;
+      case "get_press_conference": {
+        const id = int(args.pressConferenceId);
+        result = id == null ? { error: "pressConferenceId required." } : await getPressConference(id);
         break;
       }
       case "list_facts": {

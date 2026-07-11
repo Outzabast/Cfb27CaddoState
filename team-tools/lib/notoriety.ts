@@ -23,6 +23,14 @@ const BASE_POSTACTIVE = 0; // off the active roster
 const BASE_ACTIVE = 20; // rostered
 const BASE_STARTER = 50; // rostered starter
 
+/**
+ * Season-to-season carry-over: a returning player/coach opens the new season with
+ * this fraction of last season's notoriety as a FLOOR — so a star coming off a big
+ * year starts hot, then either builds on it with fresh production or eases back
+ * toward the roster baseline (the floor decays ~30%/idle year). Tunable knob.
+ */
+const SEASON_CARRY = 0.7;
+
 /** Roster-standing baseline for a season line. */
 function baseline(status: PlayerStatus, isStarter: boolean): number {
   if (status === "POSTACTIVE") return BASE_POSTACTIVE;
@@ -177,7 +185,8 @@ export async function recomputeGame(gameId: number): Promise<void> {
 /** Recompute season + overall notoriety for every player on every season roster,
  *  plus staff. The correct pass whenever program records may have moved. */
 export async function recomputeAll(): Promise<void> {
-  const seasons = await db.season.findMany({ select: { id: true } });
+  // Oldest → newest so each season's carry-in reads the just-recomputed prior one.
+  const seasons = await db.season.findMany({ select: { id: true }, orderBy: { startYear: "asc" } });
   for (const s of seasons) await recomputeSeason(s.id);
   await recomputeStaffAll();
 }
@@ -256,12 +265,36 @@ function staffSeasonTarget(role: StaffRole, agg: TeamAgg): number {
 
 /** Recompute seasonNotoriety for a season's staff, then their overall scores. */
 export async function recomputeSeasonStaff(seasonId: number): Promise<void> {
+  const season = await db.season.findUnique({ where: { id: seasonId }, select: { startYear: true } });
+  if (!season) return;
   const rows = await db.seasonStaff.findMany({ where: { seasonId } });
   if (rows.length === 0) return;
   const agg = await seasonTeamAgg(seasonId);
 
+  // Most-recent prior-season notoriety per staff member (carry-in floor).
+  const priorNotoriety = new Map<number, number>();
+  {
+    const priorRows = await db.seasonStaff.findMany({
+      where: {
+        staffId: { in: rows.map((r) => r.staffId) },
+        season: { startYear: { lt: season.startYear } },
+      },
+      select: { staffId: true, seasonNotoriety: true, season: { select: { startYear: true } } },
+    });
+    const bestYear = new Map<number, number>();
+    for (const pr of priorRows) {
+      const y = pr.season.startYear;
+      if (y > (bestYear.get(pr.staffId) ?? -Infinity)) {
+        bestYear.set(pr.staffId, y);
+        priorNotoriety.set(pr.staffId, pr.seasonNotoriety);
+      }
+    }
+  }
+
   for (const r of rows) {
-    const next = ratchet(r.seasonNotoriety, staffSeasonTarget(r.role, agg));
+    const carryIn = Math.round((priorNotoriety.get(r.staffId) ?? 0) * SEASON_CARRY);
+    const target = Math.max(staffSeasonTarget(r.role, agg), carryIn);
+    const next = ratchet(r.seasonNotoriety, target);
     if (next !== r.seasonNotoriety) {
       await db.seasonStaff.update({ where: { id: r.id }, data: { seasonNotoriety: next } });
     }
@@ -297,7 +330,8 @@ export async function recomputeStaffOverall(staffId: number): Promise<void> {
 
 /** Recompute notoriety for all staff across all seasons. */
 export async function recomputeStaffAll(): Promise<void> {
-  const seasons = await db.season.findMany({ select: { id: true } });
+  // Oldest → newest so carry-in reads the prior season (same as players).
+  const seasons = await db.season.findMany({ select: { id: true }, orderBy: { startYear: "asc" } });
   for (const s of seasons) await recomputeSeasonStaff(s.id);
 }
 
@@ -306,11 +340,39 @@ export async function recomputeStaffAll(): Promise<void> {
  * production + leading + record, ratcheted), then their overall scores.
  */
 export async function recomputeSeason(seasonId: number): Promise<void> {
+  const season = await db.season.findUnique({ where: { id: seasonId }, select: { startYear: true } });
+  if (!season) return;
+
   const roster = await db.seasonPlayer.findMany({
     where: { seasonRoster: { seasonId } },
     include: { player: { select: { status: true } } },
   });
   if (roster.length === 0) return;
+
+  // Each returning player's most-recent PRIOR season notoriety, for the carry-in
+  // floor. One query, reduced to the latest prior season per player.
+  const priorNotoriety = new Map<number, number>();
+  {
+    const priorRows = await db.seasonPlayer.findMany({
+      where: {
+        playerId: { in: roster.map((r) => r.playerId) },
+        seasonRoster: { season: { startYear: { lt: season.startYear } } },
+      },
+      select: {
+        playerId: true,
+        seasonNotoriety: true,
+        seasonRoster: { select: { season: { select: { startYear: true } } } },
+      },
+    });
+    const bestYear = new Map<number, number>();
+    for (const pr of priorRows) {
+      const y = pr.seasonRoster.season.startYear;
+      if (y > (bestYear.get(pr.playerId) ?? -Infinity)) {
+        bestYear.set(pr.playerId, y);
+        priorNotoriety.set(pr.playerId, pr.seasonNotoriety);
+      }
+    }
+  }
 
   // Each player's season aggregate.
   const valuesByPlayer = new Map<number, Values>();
@@ -330,7 +392,12 @@ export async function recomputeSeason(seasonId: number): Promise<void> {
 
   for (const sp of roster) {
     const values = valuesByPlayer.get(sp.playerId)!;
-    let score = baseline(sp.player.status, sp.isStarter);
+    // Reputation floor from last season (POSTACTIVE players don't carry).
+    const carryIn =
+      sp.player.status === "POSTACTIVE"
+        ? 0
+        : Math.round((priorNotoriety.get(sp.playerId) ?? 0) * SEASON_CARRY);
+    let score = Math.max(baseline(sp.player.status, sp.isStarter), carryIn);
     score += productionScore(values, "season");
     for (const c of CATS) {
       const v = c.value(values);

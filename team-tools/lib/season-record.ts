@@ -51,3 +51,17 @@ const wl = (w: number, l: number, t: number) => (t > 0 ? `${w}-${l}-${t}` : `${w
 export function formatRecord(r: SeasonRecord): string {
   return `${wl(r.wins, r.losses, r.ties)} (${wl(r.confWins, r.confLosses, r.confTies)})`;
 }
+
+/** Overall "W-L" (or "W-L-T") from raw scores; unplayed 0-0 games are ignored.
+ *  "—" when nothing has been played. Used for a coach's tenure record. */
+export function winLossRecord(games: { teamPoints: number; oppPoints: number }[]): string {
+  let w = 0, l = 0, t = 0;
+  for (const g of games) {
+    if (g.teamPoints === 0 && g.oppPoints === 0) continue;
+    if (g.teamPoints > g.oppPoints) w++;
+    else if (g.teamPoints < g.oppPoints) l++;
+    else t++;
+  }
+  if (w + l + t === 0) return "—";
+  return wl(w, l, t);
+}

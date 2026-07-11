@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { postMediaEvent, readIdList } from "@/lib/media/media-space";
 import { parseRecruitStatus, parseRecruitKind, parseStars, formatHometown } from "@/lib/recruits";
+import { recordRosterEvent } from "@/lib/roster-events";
 import { isValidClass } from "@/lib/classes";
 import type { PlayerClass } from "@/generated/prisma/enums";
 
@@ -197,11 +198,76 @@ export async function signRecruit(formData: FormData) {
       where: { id },
       data: { playerId: player.id, status: "ENROLLED" },
     });
+
+    await recordRosterEvent(tx, {
+      playerId: player.id,
+      seasonId: enrollSeasonId,
+      type: recruit.kind === "TRANSFER" ? "JOINED_TRANSFER" : "JOINED_RECRUIT",
+      counterparty: recruit.kind === "TRANSFER" ? recruit.previousSchool : null,
+    });
   });
 
   revalidatePath("/recruits");
   revalidatePath(`/recruits/${id}`);
   revalidatePath("/players");
+}
+
+export type OcrRecruitInput = {
+  name: string;
+  position: string;
+  kind: "HIGH_SCHOOL" | "TRANSFER";
+  stars: number | null;
+  nationalRank: number | null;
+  stateRank: number | null;
+  positionRank: number | null;
+  heightInches: number | null;
+  weightLbs: number | null;
+  hometownCity: string | null;
+  hometownState: string | null;
+  previousSchool: string | null;
+  signed: boolean;
+};
+
+/**
+ * Commit reviewed OCR recruits into a recruiting class (season). Signed prospects
+ * come in as SIGNED (so the offseason can enroll them); the rest as TARGET. Skips
+ * names already on that class's board.
+ */
+export async function commitOcrRecruits(seasonId: number, rows: OcrRecruitInput[]) {
+  if (!Number.isInteger(seasonId)) throw new Error("Pick a recruiting class first.");
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("No recruits to import.");
+
+  const existing = await db.recruit.findMany({ where: { seasonId }, select: { name: true } });
+  const seen = new Set(existing.map((r) => r.name.trim().toLowerCase()));
+
+  const data = rows
+    .map((r) => ({
+      seasonId,
+      name: String(r.name ?? "").trim(),
+      position: String(r.position ?? "").trim().slice(0, 8) || "ATH",
+      kind: r.kind === "TRANSFER" ? ("TRANSFER" as const) : ("HIGH_SCHOOL" as const),
+      stars: Number.isInteger(r.stars) ? Math.min(5, Math.max(0, r.stars as number)) : 0,
+      nationalRank: Number.isInteger(r.nationalRank) ? r.nationalRank : null,
+      stateRank: Number.isInteger(r.stateRank) ? r.stateRank : null,
+      positionRank: Number.isInteger(r.positionRank) ? r.positionRank : null,
+      heightInches: Number.isInteger(r.heightInches) ? r.heightInches : null,
+      weightLbs: Number.isInteger(r.weightLbs) ? r.weightLbs : null,
+      hometownCity: r.hometownCity?.trim() || null,
+      hometownState: r.hometownState?.trim() || null,
+      previousSchool: r.previousSchool?.trim() || null,
+      status: r.signed ? ("SIGNED" as const) : ("TARGET" as const),
+    }))
+    .filter((r) => {
+      const key = r.name.toLowerCase();
+      if (!r.name || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  if (data.length === 0) throw new Error("No new recruits to import (all already on this class's board).");
+
+  await db.recruit.createMany({ data });
+  revalidatePath("/recruits");
 }
 
 /** Fire off a recruiting profile for this recruit, in the chosen persona voices. */

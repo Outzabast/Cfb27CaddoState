@@ -13,7 +13,19 @@ import {
   PLAYER_STATUS_LABELS,
   PLAYER_STATUS_OPTIONS,
 } from "@/lib/player-profile";
-import { updatePlayerProfile, addNotorietyEvent, deleteNotorietyEvent } from "./actions";
+import {
+  updatePlayerProfile,
+  addNotorietyEvent,
+  deleteNotorietyEvent,
+  addRosterEvent,
+  deleteRosterEvent,
+} from "./actions";
+import {
+  ROSTER_EVENT_LABELS,
+  ROSTER_EVENT_ORDER,
+  transferTail,
+  activeSeasonSpans,
+} from "@/lib/roster-events";
 import { PlayerStats, type SeasonStat } from "@/components/player-stats";
 import { MediaList } from "@/components/media/media-list";
 import { fetchMediaPage } from "@/lib/media/query";
@@ -23,6 +35,7 @@ import { MediaTriggerFields } from "@/components/media/media-trigger-fields";
 import { SaveForm } from "@/components/save-form";
 import { ResultBadge } from "@/components/result-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ProfileEditBar } from "@/components/profile-edit-bar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -73,10 +86,22 @@ export default async function PlayerDetailPage({
     include: {
       seasonPlayers: { include: { seasonRoster: { include: { season: true } } } },
       notorietyEvents: { orderBy: { createdAt: "desc" } },
+      rosterEvents: { include: { season: { select: { name: true, startYear: true } } } },
     },
     omit: { photo: true },
   });
   if (!player) notFound();
+
+  // Roster history, chronological (by season, then when it was recorded).
+  const rosterEvents = [...player.rosterEvents].sort(
+    (a, b) =>
+      (a.season?.startYear ?? Infinity) - (b.season?.startYear ?? Infinity) ||
+      a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+  const allSeasons = await db.season.findMany({
+    orderBy: { startYear: "desc" },
+    select: { id: true, name: true },
+  });
 
   const [{ has: hasPhoto }] = await db.$queryRaw<{ has: boolean }[]>`
     SELECT photo IS NOT NULL AS has FROM players WHERE id = ${playerId}`;
@@ -135,6 +160,12 @@ export default async function PlayerDetailPage({
   const careerValues = mergeAggregate(careerAgg, PLAYER_STAT_GROUPS);
 
   const positions = [...new Set(seasonEntries.map((sp) => sp.position))];
+  const activeSpan = activeSeasonSpans(
+    seasonEntries.map((sp) => ({
+      startYear: sp.seasonRoster.season.startYear,
+      endYear: sp.seasonRoster.season.endYear,
+    })),
+  );
 
   // Latest season drives the header's class/number and the summary tiles.
   const latestEntry = seasonEntries.at(-1);
@@ -166,9 +197,7 @@ export default async function PlayerDetailPage({
             Reconcile stats
           </Link>
           {isEdit ? (
-            <Link href={basePath} className={buttonVariants({ variant: "outline", size: "sm" })}>
-              Done
-            </Link>
+            <ProfileEditBar formId="player-profile-form" exitHref={basePath} />
           ) : (
             <Link href={`${basePath}?mode=edit`} className={buttonVariants({ size: "sm" })}>
               Edit profile
@@ -214,6 +243,7 @@ export default async function PlayerDetailPage({
               />
               <Info label="Notoriety · Season" value={String(latestEntry?.seasonNotoriety ?? 0)} />
               <Info label="Notoriety · Program" value={String(player.overallNotoriety)} />
+              {activeSpan && <Info label="Seasons Active" value={activeSpan} />}
             </div>
           </div>
           {tiles.length > 0 && latestSeason && (
@@ -369,11 +399,17 @@ export default async function PlayerDetailPage({
         </CardHeader>
         <CardContent>
           <SaveForm
+            id="player-profile-form"
             action={updatePlayerProfile}
             successText="Profile saved"
             className="space-y-4"
           >
             <input type="hidden" name="playerId" value={playerId} />
+
+            <div className="grid gap-2">
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" name="name" defaultValue={player.name} />
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -486,8 +522,6 @@ export default async function PlayerDetailPage({
               personas={personas}
               label="Generate a player feature from this"
             />
-
-            <Button type="submit">Save profile</Button>
           </SaveForm>
         </CardContent>
       </Card>
@@ -546,6 +580,88 @@ export default async function PlayerDetailPage({
                 defaultValue={10}
                 className="w-24"
               />
+            </div>
+            <Button type="submit">Add</Button>
+          </SaveForm>
+        </CardContent>
+      </Card>
+
+      {/* Roster history / transactions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Roster timeline</CardTitle>
+          <CardDescription>
+            How this player joined, left, and changed standing. Signings, the
+            offseason, and starter changes log here automatically; add your own too.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {rosterEvents.length > 0 && (
+            <div className="overflow-hidden rounded-md border">
+              {rosterEvents.map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-center justify-between gap-3 border-b px-3 py-2 last:border-0"
+                >
+                  <span className="text-sm">
+                    <span className="font-medium">{ROSTER_EVENT_LABELS[e.type]}</span>
+                    {transferTail(e.type, e.counterparty)}
+                    {e.season ? <span className="text-muted-foreground"> · {e.season.name}</span> : null}
+                    {e.note ? <span className="text-muted-foreground"> — {e.note}</span> : null}
+                  </span>
+                  <SaveForm action={deleteRosterEvent} successText="Removed">
+                    <input type="hidden" name="id" value={e.id} />
+                    <input type="hidden" name="playerId" value={playerId} />
+                    <button
+                      type="submit"
+                      className="shrink-0 text-xs font-semibold uppercase tracking-wide text-red-600 hover:text-red-700"
+                    >
+                      Remove
+                    </button>
+                  </SaveForm>
+                </div>
+              ))}
+            </div>
+          )}
+          <SaveForm action={addRosterEvent} successText="Event added" className="flex flex-wrap items-end gap-2">
+            <input type="hidden" name="playerId" value={playerId} />
+            <div className="grid gap-1.5">
+              <Label htmlFor="re-type">Event</Label>
+              <select
+                id="re-type"
+                name="type"
+                defaultValue="JOINED_TRANSFER"
+                className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                {ROSTER_EVENT_ORDER.map((t) => (
+                  <option key={t} value={t}>
+                    {ROSTER_EVENT_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="re-season">Season</Label>
+              <select
+                id="re-season"
+                name="seasonId"
+                className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <option value="">—</option>
+                {allSeasons.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid min-w-40 gap-1.5">
+              <Label htmlFor="re-cp">Other school (transfers)</Label>
+              <Input id="re-cp" name="counterparty" placeholder="e.g. Texas" />
+            </div>
+            <div className="grid min-w-40 flex-1 gap-1.5">
+              <Label htmlFor="re-note">Note</Label>
+              <Input id="re-note" name="note" placeholder="Optional" />
             </div>
             <Button type="submit">Add</Button>
           </SaveForm>

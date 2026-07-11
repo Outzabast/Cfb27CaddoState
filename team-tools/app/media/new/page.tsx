@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { NewEventForm } from "@/components/media/new-event-form";
+import { STAFF_ROLE_LABELS } from "@/lib/staff";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,19 @@ export default async function NewMediaEventPage() {
     select: { id: true, name: true, position: true, stars: true, season: { select: { name: true } } },
   });
 
+  const staffRows = await db.staff.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      seasonStaff: {
+        select: { role: true },
+        orderBy: { season: { startYear: "desc" } },
+        take: 1,
+      },
+    },
+  });
+
   const gameOptions = games.map((g) => ({
     id: g.id,
     label: `${g.season.name} · ${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}${g.week != null ? ` (Wk ${g.week})` : ""}`,
@@ -56,6 +70,11 @@ export default async function NewMediaEventPage() {
   const recruitOptions = recruitRows.map((r) => ({
     id: r.id,
     label: `${r.season.name} · ${r.name} (${r.position})${r.stars ? ` · ${r.stars}★` : ""}`,
+  }));
+
+  const staffOptions = staffRows.map((s) => ({
+    id: s.id,
+    label: `${s.name}${s.seasonStaff[0] ? ` · ${STAFF_ROLE_LABELS[s.seasonStaff[0].role]}` : ""}`,
   }));
 
   return (
@@ -78,6 +97,7 @@ export default async function NewMediaEventPage() {
         seasons={seasons}
         players={playerOptions}
         recruits={recruitOptions}
+        staff={staffOptions}
         personas={personas}
       />
     </div>

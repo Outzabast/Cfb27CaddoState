@@ -197,6 +197,19 @@ export async function createManualEvent(formData: FormData) {
       context,
       personaIds,
     });
+  } else if (meta.subject === "staff") {
+    // A coach feature.
+    const staffId = Number(formData.get("subjectId"));
+    if (!Number.isInteger(staffId)) throw new Error("Choose a staff member.");
+    await postMediaEvent({
+      type: "MANUAL",
+      scope,
+      angle: meta.slug,
+      mediaType,
+      staffId,
+      context,
+      personaIds,
+    });
   } else {
     const subjectId = Number(formData.get("subjectId"));
     if (!Number.isInteger(subjectId)) throw new Error("Choose a subject.");

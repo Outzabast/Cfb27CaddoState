@@ -45,6 +45,8 @@ export default async function SeasonHomePage({
     select: { id: true, headline: true, viewed: true },
   });
   const socialPosts = await fetchSocialFeed({ seasonId, limit: 6, readyOnly: true });
+  // Existing staff records, so an open role can be filled by picking a prior coach.
+  const allStaff = await db.staff.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
 
   let wins = 0,
     losses = 0,
@@ -81,7 +83,7 @@ export default async function SeasonHomePage({
               </h1>
             </div>
           </div>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-4 sm:gap-6">
             <HeaderStat label="Record" value={record} />
             <HeaderStat label="PF" value={pointsFor} />
             <HeaderStat label="PA" value={pointsAgainst} />
@@ -194,7 +196,7 @@ export default async function SeasonHomePage({
             </div>
           </section>
 
-          <StaffSection seasonId={seasonId} staff={season.staff} />
+          <StaffSection seasonId={seasonId} staff={season.staff} allStaff={allStaff} />
 
           <section className="space-y-3">
             <h2 className="eyebrow !text-foreground">Latest News</h2>

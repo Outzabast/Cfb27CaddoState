@@ -6,6 +6,11 @@ export type RosterPlayerRow = {
   position: string;
   class: PlayerClass;
   number: number | null;
+  /** Optional profile fields (set on a newly-created player; fills blanks on an
+   *  existing one). Callers that don't have them omit them. */
+  heightInches?: number | null;
+  weightLbs?: number | null;
+  hometown?: string | null;
 };
 
 /**
@@ -25,7 +30,7 @@ export async function attachPlayerToRoster(
 ): Promise<number> {
   const existing = await tx.player.findFirst({
     where: { name: { equals: row.name, mode: "insensitive" } },
-    select: { id: true, name: true },
+    select: { id: true, name: true, heightInches: true, weightLbs: true, hometown: true },
   });
 
   if (existing) {
@@ -47,12 +52,23 @@ export async function attachPlayerToRoster(
         },
       });
     }
+    // Fill in profile fields the existing player is missing (never overwrite).
+    const fill: { heightInches?: number; weightLbs?: number; hometown?: string } = {};
+    if (existing.heightInches == null && row.heightInches != null) fill.heightInches = row.heightInches;
+    if (existing.weightLbs == null && row.weightLbs != null) fill.weightLbs = row.weightLbs;
+    if (!existing.hometown && row.hometown) fill.hometown = row.hometown;
+    if (Object.keys(fill).length) {
+      await tx.player.update({ where: { id: existing.id }, data: fill });
+    }
     return existing.id;
   }
 
   const created = await tx.player.create({
     data: {
       name: row.name,
+      heightInches: row.heightInches ?? null,
+      weightLbs: row.weightLbs ?? null,
+      hometown: row.hometown ?? null,
       seasonPlayers: {
         create: {
           seasonRosterId: rosterId,

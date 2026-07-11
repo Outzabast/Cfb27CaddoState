@@ -69,13 +69,16 @@ export function PlayerList({
   const [visible, setVisible] = useState<Set<PlayerSortKey>>(defaultVisible);
   const [colsOpen, setColsOpen] = useState(false);
 
-  // Restore saved column choices after mount (avoids SSR hydration mismatch).
+  // Restore saved column choices after mount. Reading localStorage must happen
+  // post-mount (not in a lazy initializer) or SSR/client hydration would mismatch,
+  // so a one-time setState in this effect is the intended pattern here.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const keys = JSON.parse(raw) as string[];
       const valid = keys.filter((k) => COLUMNS.some((c) => c.key === k)) as PlayerSortKey[];
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (valid.length) setVisible(new Set(valid));
     } catch {
       /* ignore bad/absent storage */

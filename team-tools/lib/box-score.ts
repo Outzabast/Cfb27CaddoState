@@ -5,6 +5,7 @@
 // player recorded something in it (like ESPN's "No Kick Returns").
 
 import { formatPct, formatDuration } from "./stat-fields";
+import type { RedZone, DownEff } from "./play-by-play";
 
 /** A player's game line plus display identity. Superset-compatible with a
  *  Prisma GamePlayerStat row spread with the player's name + jersey number. */
@@ -316,43 +317,97 @@ export function formatStatLine(v: Record<string, number>): string {
 
 export type TeamStatRow = { label: string; value: string | number; sub?: boolean };
 
-/** GameTeamStat fields the team-stats read table needs. */
+/**
+ * The stored team-stat record (OCR import / manual entry). Every field here
+ * OVERRIDES the value derived from the player lines + play-by-play when it's set
+ * (non-zero); otherwise the box score falls back to the derived value. Penalties
+ * and time of possession are only ever stored (nothing to derive them from).
+ */
 export type TeamTotals = {
   firstDowns: number;
   thirdDownConv: number; thirdDownAtt: number;
   fourthDownConv: number; fourthDownAtt: number;
-  totalYards: number; passYds: number; rushYds: number;
-  penalties: number; penaltyYds: number;
-  turnovers: number; timeOfPossession: number;
+  totalOffense: number; totalPlays: number; totalYards: number;
+  passYds: number; rushYds: number; passCmp: number; passAtt: number; rushAtt: number;
+  interceptions: number; fumblesLost: number; turnovers: number;
+  redZoneTd: number; redZoneFg: number; redZoneTrips: number;
+  penalties: number; penaltyYds: number; timeOfPossession: number;
 };
 
-/** ESPN-style team comparison rows. Passing comp/att, rush attempts, INTs
- *  thrown, and fumbles lost aren't stored on the team row — they're derived
- *  from the player lines so the two views can never disagree. */
-export function teamStatRows(team: TeamTotals, lines: BoxLine[]): TeamStatRow[] {
-  const cmp = sum(lines, (l) => l.passCmp);
-  const att = sum(lines, (l) => l.passAtt);
-  const intThrown = sum(lines, (l) => l.passInt);
-  const rushAtt = sum(lines, (l) => l.rushAtt);
-  const fumLost = sum(lines, (l) => l.fumblesLost);
+/** "3/4 (75%)" — red-zone scores (TD + FG) over trips. */
+const rzScore = (z: RedZone) => `${z.td + z.fg}/${z.trips} (${formatPct(z.td + z.fg, z.trips)})`;
+/** "2/4 (50%)" — red-zone touchdowns over trips. */
+const rzTd = (z: RedZone) => `${z.td}/${z.trips} (${formatPct(z.td, z.trips)})`;
+
+/**
+ * A team's box-score totals, mixing three sources so nothing has to be entered
+ * twice: yardage / volume / turnovers come from that team's player lines, red-zone
+ * efficiency from the play-by-play, and the situational stats (1st downs, 3rd/4th
+ * down, penalties, time of possession) from the stored team-stat record. `stored`
+ * may be null (no team-stats import yet) — the derived rows still fill in.
+ */
+export function teamStatRows(
+  stored: TeamTotals | null,
+  lines: BoxLine[],
+  rz: RedZone,
+  down: DownEff,
+): TeamStatRow[] {
+  // Derived-from-data values...
+  const dPassYds = sum(lines, (l) => l.passYds);
+  const dRushYds = sum(lines, (l) => l.rushYds);
+  const dCmp = sum(lines, (l) => l.passCmp);
+  const dAtt = sum(lines, (l) => l.passAtt);
+  const dRushAtt = sum(lines, (l) => l.rushAtt);
+  const dIntThrown = sum(lines, (l) => l.passInt);
+  const dFumLost = sum(lines, (l) => l.fumblesLost);
+  const dReturns = sum(lines, (l) => l.krYds) + sum(lines, (l) => l.prYds) + sum(lines, (l) => l.intYds);
+
+  // ...each overridden by a non-zero stored value (manual entry / OCR import wins).
+  const ov = (s: number | undefined, d: number) => (s && s > 0 ? s : d);
+  const passYds = ov(stored?.passYds, dPassYds);
+  const rushYds = ov(stored?.rushYds, dRushYds);
+  const cmp = ov(stored?.passCmp, dCmp);
+  const att = ov(stored?.passAtt, dAtt);
+  const rushAtt = ov(stored?.rushAtt, dRushAtt);
+  const totalOffense = ov(stored?.totalOffense, dPassYds + dRushYds);
+  const totalPlays = ov(stored?.totalPlays, dAtt + dRushAtt + sum(lines, (l) => l.sacked));
+  const totalYards = ov(stored?.totalYards, dPassYds + dRushYds + dReturns);
+  const intThrown = ov(stored?.interceptions, dIntThrown);
+  const fumLost = ov(stored?.fumblesLost, dFumLost);
+  const turnovers = ov(stored?.turnovers, dIntThrown + dFumLost);
+  const firstDowns = ov(stored?.firstDowns, down.firstDowns);
+  const third = stored && stored.thirdDownAtt > 0
+    ? { c: stored.thirdDownConv, a: stored.thirdDownAtt }
+    : { c: down.thirdConv, a: down.thirdAtt };
+  const fourth = stored && stored.fourthDownAtt > 0
+    ? { c: stored.fourthDownConv, a: stored.fourthDownAtt }
+    : { c: down.fourthConv, a: down.fourthAtt };
+  const rzR: RedZone = stored && stored.redZoneTrips > 0
+    ? { trips: stored.redZoneTrips, td: stored.redZoneTd, fg: stored.redZoneFg }
+    : rz;
+  const eff = (c: number, a: number) => (a > 0 ? `${c}-${a} (${formatPct(c, a)})` : `${c}-${a}`);
 
   return [
-    { label: "1st Downs", value: team.firstDowns },
-    { label: "3rd down efficiency", value: `${team.thirdDownConv}-${team.thirdDownAtt}`, sub: true },
-    { label: "4th down efficiency", value: `${team.fourthDownConv}-${team.fourthDownAtt}`, sub: true },
-    { label: "Total Yards", value: team.totalYards },
-    { label: "Passing", value: team.passYds },
+    { label: "1st Downs", value: firstDowns },
+    { label: "3rd down efficiency", value: eff(third.c, third.a), sub: true },
+    { label: "4th down efficiency", value: eff(fourth.c, fourth.a), sub: true },
+    { label: "Total Offense", value: totalOffense },
+    { label: "Total Plays", value: totalPlays, sub: true },
+    { label: "Yards per play", value: avg1(totalOffense, totalPlays), sub: true },
+    { label: "Passing", value: passYds, sub: true },
     { label: "Comp-Att", value: `${cmp}-${att}`, sub: true },
-    { label: "Yards per pass", value: avg1(team.passYds, att), sub: true },
+    { label: "Yards per pass", value: avg1(passYds, att), sub: true },
     { label: "Interceptions thrown", value: intThrown, sub: true },
-    { label: "Rushing", value: team.rushYds },
+    { label: "Rushing", value: rushYds, sub: true },
     { label: "Rushing Attempts", value: rushAtt, sub: true },
-    { label: "Yards per rush", value: avg1(team.rushYds, rushAtt), sub: true },
-    { label: "Penalties", value: `${team.penalties}-${team.penaltyYds}` },
-    { label: "Turnovers", value: team.turnovers },
+    { label: "Yards per rush", value: avg1(rushYds, rushAtt), sub: true },
+    { label: "Total Yards (all-purpose)", value: totalYards },
+    { label: "Red zone scores", value: rzScore(rzR) },
+    { label: "Red zone TDs", value: rzTd(rzR), sub: true },
+    { label: "Penalties", value: `${stored?.penalties ?? 0}-${stored?.penaltyYds ?? 0}` },
+    { label: "Turnovers", value: turnovers },
     { label: "Fumbles lost", value: fumLost, sub: true },
-    { label: "Interceptions thrown", value: intThrown, sub: true },
-    { label: "Possession", value: formatDuration(team.timeOfPossession) },
+    { label: "Possession", value: formatDuration(stored?.timeOfPossession ?? 0) },
   ];
 }
 
@@ -364,33 +419,20 @@ export type TeamCompareRow = {
 };
 
 /**
- * The team-stat comparison as two columns (us vs opponent). Our column keeps the
- * player-derived detail (comp-att, INTs thrown, ...); the opponent has only team
- * totals, so player-derived rows show "—" for them. `opp` null → all "—".
+ * The team-stat comparison as two columns (us vs opponent). BOTH columns are built
+ * the same way — each team's countable stats from ITS player lines, red zone from
+ * the play-by-play, situational stats from ITS stored record — so the opponent
+ * column is just as complete as ours.
  */
 export function teamCompareRows(
-  team: TeamTotals,
-  opp: TeamTotals | null,
-  lines: BoxLine[],
+  teamStored: TeamTotals | null,
+  oppStored: TeamTotals | null,
+  teamLines: BoxLine[],
+  oppLines: BoxLine[],
+  rz: { team: RedZone; opp: RedZone },
+  down: { team: DownEff; opp: DownEff },
 ): TeamCompareRow[] {
-  const us = teamStatRows(team, lines);
-  const oppByLabel: Record<string, string | number> = opp
-    ? {
-        "1st Downs": opp.firstDowns,
-        "3rd down efficiency": `${opp.thirdDownConv}-${opp.thirdDownAtt}`,
-        "4th down efficiency": `${opp.fourthDownConv}-${opp.fourthDownAtt}`,
-        "Total Yards": opp.totalYards,
-        Passing: opp.passYds,
-        Rushing: opp.rushYds,
-        Penalties: `${opp.penalties}-${opp.penaltyYds}`,
-        Turnovers: opp.turnovers,
-        Possession: formatDuration(opp.timeOfPossession),
-      }
-    : {};
-  return us.map((r) => ({
-    label: r.label,
-    us: r.value,
-    them: r.label in oppByLabel ? oppByLabel[r.label] : "—",
-    sub: r.sub,
-  }));
+  const us = teamStatRows(teamStored, teamLines, rz.team, down.team);
+  const them = teamStatRows(oppStored, oppLines, rz.opp, down.opp);
+  return us.map((r, i) => ({ label: r.label, us: r.value, them: them[i].value, sub: r.sub }));
 }

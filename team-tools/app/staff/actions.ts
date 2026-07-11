@@ -9,24 +9,36 @@ import { recomputeStaffAll } from "@/lib/notoriety";
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024; // 5MB
 
 /**
- * Assign a staff member to a role for a season. Reuses an existing staff record by
- * name (so a coach carries across seasons); replaces whoever held the role.
+ * Assign a staff member to a role for a season. Either picks an EXISTING staff
+ * record (by `staffId`, e.g. a coach from a prior season chosen from the dropdown)
+ * or creates a new one from `name` (reusing a same-named record if one exists, so a
+ * coach carries across seasons). Replaces whoever held the role.
  */
 export async function addSeasonStaff(formData: FormData) {
   const seasonId = Number(formData.get("seasonId"));
   if (!Number.isInteger(seasonId)) throw new Error("Bad season id.");
   const role = String(formData.get("role") ?? "");
   if (!isStaffRole(role)) throw new Error("Pick a role.");
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) throw new Error("Name is required.");
 
-  const existing = await db.staff.findFirst({ where: { name }, select: { id: true } });
-  const staff = existing ?? (await db.staff.create({ data: { name }, select: { id: true } }));
+  let staffId: number;
+  let staffName: string;
+  const pickedId = Number(formData.get("staffId"));
+  if (Number.isInteger(pickedId) && pickedId > 0) {
+    const s = await db.staff.findUnique({ where: { id: pickedId }, select: { id: true, name: true } });
+    if (!s) throw new Error("That staff member no longer exists.");
+    staffId = s.id;
+    staffName = s.name;
+  } else {
+    staffName = String(formData.get("name") ?? "").trim();
+    if (!staffName) throw new Error("Enter a name or pick an existing staff member.");
+    const existing = await db.staff.findFirst({ where: { name: staffName }, select: { id: true } });
+    staffId = existing?.id ?? (await db.staff.create({ data: { name: staffName }, select: { id: true } })).id;
+  }
 
   await db.seasonStaff.upsert({
     where: { seasonId_role: { seasonId, role } },
-    create: { seasonId, role, staffId: staff.id, staffName: name },
-    update: { staffId: staff.id, staffName: name },
+    create: { seasonId, role, staffId, staffName },
+    update: { staffId, staffName },
   });
 
   after(() => recomputeStaffAll());

@@ -29,6 +29,7 @@ type Row = {
   game: { opponent: string; week: number | null } | null;
   season: { name: string } | null;
   recruit: { name: string } | null;
+  staff: { name: string } | null;
 };
 
 function toItem(m: Row): MediaListItem {
@@ -38,6 +39,7 @@ function toItem(m: Row): MediaListItem {
     subjectLabel = `vs ${m.game.opponent}${m.game.week != null ? ` · Wk ${m.game.week}` : ""}`;
   else if (m.scope === "TEAM" && m.season) subjectLabel = m.season.name;
   else if (m.scope === "RECRUIT" && m.recruit) subjectLabel = m.recruit.name;
+  else if (m.scope === "STAFF" && m.staff) subjectLabel = m.staff.name;
 
   return {
     id: m.id,
@@ -71,6 +73,7 @@ const listSelect = {
   game: { select: { opponent: true, week: true } },
   season: { select: { name: true } },
   recruit: { select: { name: true } },
+  staff: { select: { name: true } },
 } as const;
 
 /** All media, newest first (the global inbox). */

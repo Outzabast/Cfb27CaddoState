@@ -35,15 +35,17 @@ export function buildPrompt(kind: OcrKind): { system: string; instruction: strin
         instruction: `This is a team roster screen. For every player row you can read, output:
 {
   "players": [
-    { "name": string, "position": string, "class": string|null, "number": number|null }
+    { "name": string, "position": string, "class": string|null, "number": number|null,
+      "height": string|null, "weightLbs": number|null, "hometown": string|null }
   ]
 }
-- "name" is the player's full name.
-- "position" is the abbreviation shown (QB, RB, WR, LT, MLB, CB, K, ...), 8 chars max.
-- "class" is the year/class exactly as shown (e.g. "FR", "RS SO", "Senior"). Valid meanings: ${CLASS_HINT}. Use null if not shown.
-- "number" is the jersey number as an integer, or null if not shown.
+- "name" is the player's full name (from the row, or the DETAIL PANEL header when it's the selected player).
+- "position" is the abbreviation shown (QB, RB, WR, LT, MLB, CB, K, LEDG, WILL, ...), 8 chars max.
+- "class" is the YEAR column. A "(RS)" tag means the player has redshirted — combine them: "SR (RS)" → "Redshirt Senior", "SO (RS)" → "Redshirt Sophomore", "SR" → "Senior". Valid meanings: ${CLASS_HINT}. Use null if not shown.
+- "number" is the jersey number as an integer (e.g. "#7" → 7), or null if not shown.
+- "height"/"weightLbs"/"hometown" come from the player DETAIL PANEL (right side) when it is open — read the HEIGHT & WEIGHT (e.g. "5'11\" | 208 lbs" → height "5'11\"", weightLbs 208) and HOMETOWN ("Wallingford, CT") for THAT selected player only. Leave these null for every other row (the table columns are ratings, not these).
 Include every player row you can read; omit rows you cannot. If several images are
-given, return all unique players across them (a player shown twice appears once).`,
+given, return all unique players across them (a player shown twice merges into one).`,
       };
 
     case "schedule":
@@ -80,12 +82,20 @@ TEAM STATS — use ONLY these field keys (omit any you cannot read):
 ${statFieldList(TEAM_STAT_GROUPS)}
 - "stats" = the CADDO STATE column. "oppStats" = the OPPONENT column, using the SAME field keys.
 - If only one team's column is visible, fill only that team's object and leave the other empty ({}).
-Notes:
-- Time of possession (timeOfPossession) is a string "mm:ss".
-- If a stat is shown as made/attempts (e.g. 3rd down "9-18", FG "2/3"), split it into the two keys (thirdDownConv=9, thirdDownAtt=18; fgMade=2, fgAtt=3).
-- If a stat is a triple like "Rushes-Yards-TDs 36-135-1", map ONLY the fields that exist here — use the Yards value for rushYds (there is no team rush-attempts or rush-TD field).
-- "Passing Yards" -> passYds. All other values are plain numbers.
-- Stats may be split across several images (the user scrolls). Combine them into ONE "stats" and ONE "oppStats" object; read the "scoreboard" from whichever image shows it.`,
+Notes / label mapping (this is the EA team-stats comparison screen):
+- "First Downs" -> firstDowns. "Total Plays" -> totalPlays. "Passing Yards" -> passYds.
+- CRITICAL: "Total Offense" and "Total Yards" are TWO SEPARATE stats — never merge them or copy one into the other. "Total Offense" (passing + rushing production) -> totalOffense. "Total Yards" (all-purpose: total offense PLUS return and defensive yards; a distinct, usually larger number) -> totalYards. Capture whichever of the two the screen shows into its OWN key; if only one appears, leave the other's key omitted.
+- "Rushes | Yards | TDs" (e.g. "45 | 224 | 3") -> rushAtt=45, rushYds=224, rushTd=3.
+- "Comp | Att | TDs" (e.g. "31 | 47 | 2") -> passCmp=31, passAtt=47, passTd=2.
+- "3rd Down Conv" "9 | 18 (50%)" -> thirdDownConv=9, thirdDownAtt=18 (ignore the %). Same shape for "4th Down Conv" -> fourthDownConv/fourthDownAtt and "2-Point Conv" -> twoPointConv/twoPointAtt.
+- "Red Zone TD | FG | %" (e.g. "5 | 2 | 100 %") -> redZoneTd=5, redZoneFg=2, and redZoneTrips = total red-zone trips: round((redZoneTd+redZoneFg) / (percent/100)); if the percent is 100 or 0, redZoneTrips = redZoneTd+redZoneFg.
+- "Turnovers" "2 (+1)" -> turnovers=2 (ignore the margin in parentheses). "Interceptions" -> interceptions. "Fumble Lost" -> fumblesLost.
+- "PR Yards" -> prYds. "KR Yards" -> krYds.
+- "Punts" shown as a decimal average (e.g. "53.5") -> puntAvg (a decimal is fine).
+- "Penalties" "0 | 0" -> penalties (count) then penaltyYds. "Possession Time" "mm:ss" -> timeOfPossession.
+- IGNORE the "Score" row (the scoreboard covers it) and the derived ratios "Yards Per Play / Rush / Pass" (do not output them).
+- Time of possession is a string "mm:ss".
+- Stats span several images (the user scrolls). Combine them into ONE "stats" and ONE "oppStats" object; read the "scoreboard" from whichever image shows the header quarter-by-quarter line.`,
       };
 
     case "playerStats":
@@ -129,7 +139,59 @@ Output:
 - "description" is the play text WITHOUT the leading team tag and WITHOUT the trailing clock — e.g. "Isaac Boone, 34 Yd run (Danny Paul kick)", "Team Safety", "Daniel Kinney, 28 Yd FG".
 - "points" is the play's value if you can infer it: touchdown + kick = 7; touchdown + 2-pt conversion = 8; touchdown with no PAT shown = 6; field goal = 3; safety = 2. Use null if unsure.
 - SCOREBOARD: read the quarter-by-quarter line from the header if visible (as in the team-stats screen), else null. Omit OT unless the game went to overtime.
-- Several images are usually given (one per quarter). Return ALL plays across them, each tagged with its own quarter — do not drop or merge across quarters. Keep them in the on-screen order.`,
+- Several images are usually given (one per quarter). Return ALL plays across them, each tagged with its own quarter — keep them in on-screen order.
+- OVERLAPPING IMAGES: images may overlap and repeat scoring plays. Each play shows a clock time — use the time + quarter + text to recognize the SAME scoring play across images and output it only ONCE.`,
+      };
+
+    case "recruits":
+      return {
+        system: SHARED_RULES,
+        instruction: `This is the CFB27 RECRUITING BOARD. The large card on the right is one prospect's full detail; a list on the left may show more prospects (with shorter data). Read every prospect you can. Output:
+{
+  "recruits": [
+    { "name": string, "position": string, "kind": "HIGH_SCHOOL"|"TRANSFER",
+      "stars": number|null, "nationalRank": number|null, "stateRank": number|null, "positionRank": number|null,
+      "height": string|null, "weightLbs": number|null, "hometown": string|null, "previousSchool": string|null, "signed": boolean }
+  ]
+}
+From the DETAIL CARD (most complete — prefer it):
+- "name": the prospect's full name, in normal case (e.g. header "SHAUN ROZEBOOM" → "Shaun Rozeboom").
+- "position": the POSITION value (QB, RT, SS, …), 8 chars max.
+- "stars": count of FILLED stars (★) in the rating, 0–5.
+- The stat row reads "NAT: 1974 | STA: 72 | POS: 151" → nationalRank=1974, stateRank=72, positionRank=151. Use null for any not shown.
+- "height": the HEIGHT & WEIGHT value's height exactly as shown, e.g. "6'6\"". "weightLbs": the weight number (284).
+- "hometown": the HOMETOWN value, e.g. "New Orleans, LA".
+- "kind": "HIGH_SCHOOL" when CLASS is "High School"; "TRANSFER" for a transfer-portal prospect (CLASS shows a college / eligibility, or they're on the Transfer Portal tab). For a transfer, put the prior program in "previousSchool".
+- "signed": true if this prospect shows a SIGNED status/banner, else false.
+From LIST ROWS (left sidebar), if present: read name (may be an initial + surname like "S. Rozeboom"), position, stars, and signed. Leave unknown fields null.
+- If the same prospect appears in both the list and the detail card, return them as separate entries — they'll be reconciled later; just prefer the fuller detail-card name.`,
+      };
+
+    case "playByPlay":
+      return {
+        system: SHARED_RULES,
+        instruction: `This is a game PLAY-BY-PLAY (the in-game drive log). It's a running list of plays. A team banner (e.g. "NIU at 15:00" or "CADDO STATE at 14:09") marks who has the ball; every play under a banner belongs to THAT team until the next banner. Each play shows a situation line ("1st & 10 on NIU 25", "Kickoff on CSU 35", "4th & 14 on NIU 21") and a detail line "(15:00 Q1) <description>". Output, in top-to-bottom order:
+{
+  "plays": [
+    { "quarter": number|null, "clock": string|null, "team": "team"|"opp"|null,
+      "situation": string|null, "description": string,
+      "playType": string|null, "points": number|null, "scoringTeam": "team"|"opp"|null }
+  ]
+}
+- The user's team is CADDO STATE (abbreviated CSU). Plays under a Caddo State / CSU banner are "team"; under any other team's banner are "opp". If you genuinely CANNOT tell whose ball it is, set "team": null — the importer defaults it to whoever had it on the previous play. Prefer null over guessing.
+- "quarter" from the "Q1"/"Q2"… in the detail line (1-4; 5+ for OT). ALWAYS include "clock" — the "mm:ss" in the detail line (e.g. "15:00", "14:24") — it's what orders the plays.
+- "situation" is the down-and-distance / field-position line exactly as shown (e.g. "1st & 10 on NIU 25"), or null. "description" is the play text (e.g. "Ryan Browne pass to Joe Stein for 6 yards.").
+- CLASSIFY each play with "playType" (one of): scrimmage (ordinary rush/pass), touchdown, extra_point, extra_point_missed, two_point, two_point_failed, field_goal, field_goal_missed, safety, punt, interception, fumble, turnover_on_downs, kickoff, penalty, kneel, end_period, other. Use "scrimmage" for a normal play that doesn't score or end the drive.
+- SCORING: set "points" to the points this SINGLE play scored (touchdown=6, extra point good=1, two-point good=2, field goal good=3, safety=2; everything else 0), and "scoringTeam" to who got them. CRITICAL — the scorer is NOT always the team with the ball:
+  · pick-six ("intercepted … returned for a TD") and fumble-return TD → playType "interception"/"fumble", points 6, scoringTeam = the DEFENDING team (the OTHER team).
+  · punt-return TD → playType "punt", points 6, scoringTeam = the RETURNING team (the OTHER team).
+  · kickoff-return TD → playType "kickoff", points 6, scoringTeam = the RECEIVING team.
+  · safety → points 2, scoringTeam = the DEFENDING team.
+  · a missed/blocked kick or failed conversion → points 0.
+  Leave scoringTeam null when points is 0.
+- A DRIVE ends with a concluding play: a touchdown (then its extra_point or two_point on the NEXT line), a made field_goal, a punt, a turnover (interception/fumble/turnover_on_downs), a safety, or end_period (end of quarter/half/game). In OT a walk-off touchdown may have no extra point. Classify these correctly so drives can be scored.
+- OVERLAPPING IMAGES: the screens are captured by scrolling, so consecutive images overlap and repeat some plays. DON'T try to dedupe — just transcribe EVERY play you can read, exactly once per time it appears on screen, keeping its "(mm:ss Qn)" timestamp and text. The app merges repeats internally (same quarter + clock + text = one play), so an accurate timestamp on every play matters more than avoiding repeats.
+- Transcribe plays in top-to-bottom order across the images — do not reorder.`,
       };
   }
 }

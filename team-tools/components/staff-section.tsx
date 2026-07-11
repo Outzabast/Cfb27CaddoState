@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { SaveForm } from "@/components/save-form";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { STAFF_ROLES, STAFF_ROLE_LABELS } from "@/lib/staff";
-import { addSeasonStaff, removeSeasonStaff } from "@/app/staff/actions";
+import { removeSeasonStaff } from "@/app/staff/actions";
+import { StaffAssignForm, type StaffOption } from "@/components/staff-assign-form";
 import type { StaffRole } from "@/generated/prisma/enums";
 
 export type SeasonStaffRow = {
@@ -18,9 +17,11 @@ export type SeasonStaffRow = {
 export function StaffSection({
   seasonId,
   staff,
+  allStaff,
 }: {
   seasonId: number;
   staff: SeasonStaffRow[];
+  allStaff: StaffOption[];
 }) {
   return (
     <section className="space-y-3">
@@ -53,14 +54,7 @@ export function StaffSection({
                   </div>
                 </div>
               ) : (
-                <SaveForm action={addSeasonStaff} successText="Assigned" className="flex items-center gap-2">
-                  <input type="hidden" name="seasonId" value={seasonId} />
-                  <input type="hidden" name="role" value={role} />
-                  <Input name="name" placeholder="Name…" className="h-8 flex-1" />
-                  <Button type="submit" size="sm" variant="secondary">
-                    Assign
-                  </Button>
-                </SaveForm>
+                <StaffAssignForm seasonId={seasonId} role={role} existing={allStaff} />
               )}
             </div>
           );

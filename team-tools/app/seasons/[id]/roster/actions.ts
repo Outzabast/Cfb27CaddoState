@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { isValidClass } from "@/lib/classes";
 import { parseRosterRows } from "@/lib/roster-import";
 import { attachPlayerToRoster } from "@/lib/player-roster";
+import { recordRosterEvent } from "@/lib/roster-events";
 import { recomputeAll } from "@/lib/notoriety";
 import type { PlayerClass } from "@/generated/prisma/enums";
 
@@ -69,10 +70,20 @@ async function getRosterId(seasonId: number): Promise<number> {
  * player already on this roster is skipped, and one that exists in another season
  * is linked rather than duplicated). De-duplicates names within the batch too.
  */
+type NewPlayerRow = {
+  name: string;
+  position: string;
+  class: PlayerClass;
+  number: number | null;
+  heightInches?: number | null;
+  weightLbs?: number | null;
+  hometown?: string | null;
+};
+
 async function createPlayers(
   seasonId: number,
   rosterId: number,
-  rows: { name: string; position: string; class: PlayerClass; number: number | null }[],
+  rows: NewPlayerRow[],
 ) {
   // Collapse duplicate names within this import (first occurrence wins).
   const seen = new Set<string>();
@@ -161,6 +172,9 @@ export type OcrRosterInput = {
   position: string;
   class: string;
   number: number | null;
+  heightInches: number | null;
+  weightLbs: number | null;
+  hometown: string | null;
 };
 
 /**
@@ -173,7 +187,7 @@ export async function commitOcrRoster(seasonId: number, rows: OcrRosterInput[]) 
   if (!Array.isArray(rows)) throw new Error("No players to import.");
 
   const errors: string[] = [];
-  const clean: { name: string; position: string; class: PlayerClass; number: number | null }[] = [];
+  const clean: NewPlayerRow[] = [];
 
   rows.forEach((r, i) => {
     const row = i + 1;
@@ -195,7 +209,15 @@ export async function commitOcrRoster(seasonId: number, rows: OcrRosterInput[]) 
     }
 
     if (name && position && position.length <= MAX_POSITION_LEN && isValidClass(cls)) {
-      clean.push({ name, position, class: cls, number });
+      clean.push({
+        name,
+        position,
+        class: cls,
+        number,
+        heightInches: Number.isInteger(r?.heightInches) ? r.heightInches : null,
+        weightLbs: Number.isInteger(r?.weightLbs) ? r.weightLbs : null,
+        hometown: String(r?.hometown ?? "").trim() || null,
+      });
     }
   });
 
@@ -211,15 +233,30 @@ export async function updateSeasonPlayer(formData: FormData) {
   const seasonPlayerId = Number(formData.get("seasonPlayerId"));
   if (![seasonId, seasonPlayerId].every(Number.isInteger)) throw new Error("Bad ids.");
 
+  const isStarter = formData.get("isStarter") != null;
+  const before = await db.seasonPlayer.findUnique({
+    where: { id: seasonPlayerId },
+    select: { isStarter: true, playerId: true },
+  });
+
   await db.seasonPlayer.update({
     where: { id: seasonPlayerId },
     data: {
       position: parsePosition(formData),
       class: parseClass(formData),
       number: parseNumber(formData),
-      isStarter: formData.get("isStarter") != null,
+      isStarter,
     },
   });
+
+  // Log a starter change to the player's roster timeline.
+  if (before && before.isStarter !== isStarter) {
+    await recordRosterEvent(db, {
+      playerId: before.playerId,
+      seasonId,
+      type: isStarter ? "NAMED_STARTER" : "LOST_STARTER",
+    });
+  }
 
   // Starter/class shifts baselines and records — recompute every player.
   after(() => recomputeAll());

@@ -1,19 +1,32 @@
 import type { PlayerClass, GameLocation } from "@/generated/prisma/enums";
 
 /** The screens we can OCR-import from. */
-export const OCR_KINDS = ["roster", "schedule", "teamStats", "playerStats", "scoringSummary"] as const;
+export const OCR_KINDS = [
+  "roster",
+  "schedule",
+  "teamStats",
+  "playerStats",
+  "scoringSummary",
+  "recruits",
+  "playByPlay",
+] as const;
 export type OcrKind = (typeof OCR_KINDS)[number];
 
 export function isOcrKind(v: unknown): v is OcrKind {
   return typeof v === "string" && (OCR_KINDS as readonly string[]).includes(v);
 }
 
-/** One player read off a roster screen. `class` is null when unreadable. */
+/** One player read off a roster screen. `class` is null when unreadable. Height/
+ *  weight/hometown come from the player detail panel when it's visible. */
 export type OcrRosterRow = {
   name: string;
   position: string;
   class: PlayerClass | null;
   number: number | null;
+  heightInches: number | null;
+  weightLbs: number | null;
+  hometownCity: string | null;
+  hometownState: string | null;
 };
 
 /** One game read off a schedule screen. Scores are null when unplayed/unreadable. */
@@ -83,7 +96,64 @@ export type OcrResult =
       scoreboard: OcrScoreboard | null;
     }
   | { kind: "playerStats"; lines: OcrPlayerStatLine[] }
-  | { kind: "scoringSummary"; plays: OcrScoringPlay[]; scoreboard: OcrScoreboard | null };
+  | { kind: "scoringSummary"; plays: OcrScoringPlay[]; scoreboard: OcrScoreboard | null }
+  | { kind: "recruits"; rows: OcrRecruitRow[] }
+  | { kind: "playByPlay"; plays: OcrPlay[] };
+
+/** One recruiting prospect read off the CFB27 recruiting board. Ranks are the
+ *  NAT/STA/POS numbers; `signed` reflects the SIGNED status on the board. */
+export type OcrRecruitRow = {
+  name: string;
+  position: string;
+  kind: "HIGH_SCHOOL" | "TRANSFER";
+  stars: number | null;
+  nationalRank: number | null;
+  stateRank: number | null;
+  positionRank: number | null;
+  heightInches: number | null;
+  weightLbs: number | null;
+  hometownCity: string | null;
+  hometownState: string | null;
+  previousSchool: string | null;
+  signed: boolean;
+};
+
+/** A typed play outcome the OCR classifies (lowercase mirror of the PlayType enum). */
+export type OcrPlayType =
+  | "scrimmage"
+  | "touchdown"
+  | "extra_point"
+  | "extra_point_missed"
+  | "two_point"
+  | "two_point_failed"
+  | "field_goal"
+  | "field_goal_missed"
+  | "safety"
+  | "punt"
+  | "interception"
+  | "fumble"
+  | "turnover_on_downs"
+  | "kickoff"
+  | "penalty"
+  | "kneel"
+  | "end_period"
+  | "other";
+
+/** One play from an in-game play-by-play screen. "team" = Caddo State has the ball;
+ *  null means the model couldn't tell (the importer carries the last team forward). */
+export type OcrPlay = {
+  quarter: number | null;
+  clock: string | null;
+  team: "team" | "opp" | null;
+  situation: string | null;
+  description: string;
+  /** Typed outcome, if the model can classify it. */
+  playType?: OcrPlayType | null;
+  /** Points scored on this play (0/absent for non-scoring). */
+  points?: number | null;
+  /** Which team scored the points — "team"/"opp"; null → the possessing team. */
+  scoringTeam?: "team" | "opp" | null;
+};
 
 export type OcrResponse =
   | { ok: true; result: OcrResult }

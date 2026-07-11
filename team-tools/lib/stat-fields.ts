@@ -98,18 +98,31 @@ export const TEAM_STAT_GROUPS: StatGroup[] = [
     title: "Offensive",
     fields: [
       { name: "firstDowns", label: "1st Downs" },
+      { name: "totalOffense", label: "Total Offense" },
       { name: "totalPlays", label: "Plays" },
-      { name: "totalYards", label: "Total Yds" },
+      { name: "passCmp", label: "Comp" },
+      { name: "passAtt", label: "Pass Att" },
       { name: "passYds", label: "Pass Yds" },
+      { name: "passTd", label: "Pass TD" },
+      { name: "rushAtt", label: "Rush Att" },
       { name: "rushYds", label: "Rush Yds" },
+      { name: "rushTd", label: "Rush TD" },
       { name: "thirdDownConv", label: "3rd Conv" },
       { name: "thirdDownAtt", label: "3rd Att" },
       { name: "fourthDownConv", label: "4th Conv" },
       { name: "fourthDownAtt", label: "4th Att" },
+      { name: "twoPointConv", label: "2pt Conv" },
+      { name: "twoPointAtt", label: "2pt Att" },
+      { name: "redZoneTd", label: "RZ TD" },
+      { name: "redZoneFg", label: "RZ FG" },
+      { name: "redZoneTrips", label: "RZ Trips" },
+      { name: "turnovers", label: "Turnovers" },
+      { name: "interceptions", label: "INT Thrown" },
+      { name: "fumblesLost", label: "Fum Lost" },
       { name: "penalties", label: "Penalties" },
       { name: "penaltyYds", label: "Pen Yds" },
-      { name: "turnovers", label: "Turnovers" },
       { name: "timeOfPossession", label: "TOP", format: "duration" },
+      { name: "totalYards", label: "Total Yards (all-purpose)" },
     ],
   },
   {
@@ -122,7 +135,7 @@ export const TEAM_STAT_GROUPS: StatGroup[] = [
     ],
   },
   {
-    title: "Kicking",
+    title: "Kicking / Punting",
     fields: [
       { name: "fgMade", label: "FGM" },
       { name: "fgAtt", label: "FGA" },
@@ -130,13 +143,14 @@ export const TEAM_STAT_GROUPS: StatGroup[] = [
       { name: "xpAtt", label: "XPA" },
       { name: "punts", label: "Punts" },
       { name: "puntYds", label: "Punt Yds" },
+      { name: "puntAvg", label: "Punt Avg", float: true },
     ],
   },
   {
-    title: "Other",
+    title: "Returns",
     fields: [
-      { name: "returnYds", label: "Return Yds" },
-      { name: "returnTd", label: "Return TD" },
+      { name: "prYds", label: "PR Yds" },
+      { name: "krYds", label: "KR Yds" },
     ],
   },
 ];
@@ -145,8 +159,9 @@ export const TEAM_STAT_GROUPS: StatGroup[] = [
 export const TEAM_PCTS: DerivedPct[] = [
   { label: "3rd Down %", num: "thirdDownConv", den: "thirdDownAtt", group: "Offensive" },
   { label: "4th Down %", num: "fourthDownConv", den: "fourthDownAtt", group: "Offensive" },
-  { label: "FG %", num: "fgMade", den: "fgAtt", group: "Kicking" },
-  { label: "XP %", num: "xpMade", den: "xpAtt", group: "Kicking" },
+  { label: "2pt %", num: "twoPointConv", den: "twoPointAtt", group: "Offensive" },
+  { label: "FG %", num: "fgMade", den: "fgAtt", group: "Kicking / Punting" },
+  { label: "XP %", num: "xpMade", den: "xpAtt", group: "Kicking / Punting" },
 ];
 
 /** Format made/attempts as a whole-number percentage, or "—" when no attempts. */

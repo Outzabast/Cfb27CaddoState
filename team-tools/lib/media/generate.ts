@@ -17,9 +17,10 @@ import {
   describePlayer,
   describePlayers,
   describeRecruit,
+  describeStaffFeature,
   describeSeason,
 } from "./subject";
-import { angleBySlug, defaultAngleForScope } from "./angles";
+import { defaultAngleForScope } from "./angles";
 import { assembleFacts } from "./facts";
 import { getCurrentSeasonId } from "@/lib/season";
 
@@ -34,8 +35,9 @@ const SYSTEM_PREFACE =
   "You are a writer for a college-football program's internal media hub. You have " +
   "research tools — use them to build your own picture of whoever and whatever the " +
   "story touches (player dossiers, a player's other games, the roster, the coaching " +
-  "staff, prior articles by you or about this subject, and extra standing background " +
-  "facts via list_facts) so each piece is specific and fresh, not " +
+  "staff, prior articles by you or about this subject, real quotes from published " +
+  "press conferences via list_press_conferences / get_press_conference, and extra " +
+  "standing background facts via list_facts) so each piece is specific and fresh, not " +
   "a template. Write ONLY from real data the tools and prompt provide — never invent " +
   "scores, names, or stats, and never contradict the box score. Use the editor's " +
   "extra context for color. When done researching, reply with ONLY a JSON object: " +
@@ -55,15 +57,18 @@ const ANGLE_INSTRUCTION: Record<string, string> = {
     "Write a RECRUITING PROFILE on this prospect — who they are, their rating/rankings, what they'd bring, and where they stand with Caddo State. If they're a TRANSFER, center it on their previous school, production there, and remaining eligibility. This is a recruit, NOT a current roster player: never invent stats or games they've played FOR US.",
   departure:
     "Write a TRANSFER PORTAL DEPARTURE story: this player is leaving Caddo State via the portal. Ground it in what they did here and treat the exit as news — never invent a destination school unless the editor's context provides one.",
+  "staff-feature":
+    "Write a STAFF FEATURE on this coach — tenure, their record at Caddo State, role history, and where the program is headed under them. Ground it in the record and seasons provided; don't invent jobs or results.",
 };
 
 type MediaRow = {
-  scope: "PLAYER" | "GAME" | "TEAM" | "RECRUIT";
+  scope: "PLAYER" | "GAME" | "TEAM" | "RECRUIT" | "STAFF";
   angle: string | null;
   playerId: number | null;
   gameId: number | null;
   seasonId: number | null;
   recruitId: number | null;
+  staffId: number | null;
   promptContext: string | null;
   authorPersonaId: number | null;
 };
@@ -150,6 +155,9 @@ async function buildSeed(
     });
     factsSeasonId = recruit?.seasonId ?? null;
     out.push(`- This recruit: recruitId ${media.recruitId}` + (recruit ? `, class seasonId ${recruit.seasonId}` : ""));
+  } else if (media.scope === "STAFF" && media.staffId != null) {
+    factsSeasonId = await getCurrentSeasonId();
+    out.push(`- This coach: staffId ${media.staffId}`);
   }
   if (media.authorPersonaId != null) {
     out.push(`- Your byline persona id: ${media.authorPersonaId} (list_articles to see your past pieces)`);
@@ -222,6 +230,8 @@ export async function runGeneration(mediaId: number): Promise<void> {
         : await describeSeason(media.seasonId);
     } else if (media.scope === "RECRUIT" && media.recruitId != null) {
       subject = await describeRecruit(media.recruitId);
+    } else if (media.scope === "STAFF" && media.staffId != null) {
+      subject = await describeStaffFeature(media.staffId);
     } else {
       throw new Error("Media is missing a subject to write about.");
     }

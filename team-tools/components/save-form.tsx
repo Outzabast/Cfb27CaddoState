@@ -6,6 +6,8 @@ type SaveFormProps = Omit<React.ComponentProps<"form">, "action"> & {
   action: (formData: FormData) => Promise<unknown>;
   loadingText?: string;
   successText?: string;
+  /** Called after the action resolves successfully (before any redirect). */
+  onSuccess?: () => void;
 };
 
 /**
@@ -31,6 +33,7 @@ export function SaveForm({
   action,
   loadingText = "Saving…",
   successText = "Saved",
+  onSuccess,
   children,
   // React manages encoding/method for function actions and warns if they're
   // set explicitly — drop them so callers with file inputs don't trip it.
@@ -48,9 +51,11 @@ export function SaveForm({
         try {
           await action(formData);
           toast.success(successText, { id });
+          onSuccess?.();
         } catch (e) {
           if (isControlFlowError(e)) {
             toast.success(successText, { id });
+            onSuccess?.();
             throw e; // let Next perform the redirect / notFound
           }
           toast.error(e instanceof Error ? e.message : "Something went wrong", {

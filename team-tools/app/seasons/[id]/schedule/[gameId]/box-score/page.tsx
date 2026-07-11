@@ -8,10 +8,28 @@ import {
   upsertOppStats,
   zeroOutRoster,
   generateGameArticle,
+  updateGameSummary,
+  generateGameSummaryAction,
+  updateGamePlay,
+  deleteGamePlay,
+  setPlaysPossession,
+  setPlayDriveBoundary,
+  addGamePlay,
+  deleteDrive,
+  deleteAllPlays,
 } from "./actions";
+import { computeRecord, formatRecord } from "@/lib/season-record";
 import { StatFieldGroups } from "@/components/stat-field-groups";
 import { BoxScoreImportMenu } from "@/components/ocr/box-score-import";
-import { BoxScoreRead } from "@/components/box-score/box-score-read";
+import { PlayerBoxTables, TeamStatsPanel } from "@/components/box-score/box-score-read";
+import { BoxScoreReadTabs } from "@/components/box-score/box-score-read-tabs";
+import { OppBoxScoreRead, type OppLine } from "@/components/box-score/opp-box-score-read";
+import { OppPlayerStatTable } from "@/components/box-score/opp-player-stat-table";
+import { ScoreReconcile } from "@/components/box-score/score-reconcile";
+import { GameScore } from "@/components/game-score";
+import { GameSummarySection } from "@/components/game-summary-section";
+import { PlayByPlay } from "@/components/play-by-play";
+import { PlayByPlayEditor } from "@/components/play-by-play-editor";
 import { PersonaSelect } from "@/components/media/persona-select";
 import { PlayerMultiSelect } from "@/components/media/player-multi-select";
 import { SaveForm } from "@/components/save-form";
@@ -25,9 +43,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-const selectClass =
-  "h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
 export default async function BoxScorePage({
   params,
@@ -49,6 +64,8 @@ export default async function BoxScorePage({
       oppStats: true,
       playerStats: { include: { player: true } },
       scoringPlays: { orderBy: { sortOrder: "asc" } },
+      plays: { orderBy: { sortOrder: "asc" } },
+      oppPlayerStats: { orderBy: { playerName: "asc" } },
     },
   });
   if (!game || game.seasonId !== seasonId) notFound();
@@ -69,6 +86,14 @@ export default async function BoxScorePage({
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
+
+  // Caddo State's season record, for the ESPN-style header. The opponent's record
+  // isn't tracked, so it's shown record-less.
+  const seasonGames = await db.game.findMany({
+    where: { seasonId },
+    select: { teamPoints: true, oppPoints: true, isConference: true },
+  });
+  const teamRecord = formatRecord(computeRecord(seasonGames));
   const rosterPlayers = roster.map((e) => ({
     id: e.playerId,
     name: e.player.name,
@@ -94,6 +119,24 @@ export default async function BoxScorePage({
     number: numberByPlayer.get(s.playerId) ?? null,
   }));
 
+  // Opponent lines share our BoxLine stat shape, keyed by their own row id.
+  const oppLines: OppLine[] = game.oppPlayerStats.map((s) => ({
+    ...s,
+    playerId: s.id,
+    name: s.playerName,
+    number: null,
+    position: s.position,
+  }));
+
+  // Editable opponent stat lines (edit mode).
+  const oppStatRows = game.oppPlayerStats.map((s) => ({
+    id: s.id,
+    playerName: s.playerName,
+    position: s.position ?? "",
+    statLine: formatStatLine(s as unknown as Record<string, number>),
+    values: s as unknown as Record<string, number>,
+  }));
+
   // ---- Edit-mode data (table + dialog editor) ----
   const statRows: StatLineRow[] = game.playerStats.map((s) => ({
     playerId: s.playerId,
@@ -111,23 +154,19 @@ export default async function BoxScorePage({
   return (
     <div className="space-y-8">
       <div>
-        <Link
-          href={backHref}
-          className="text-sm text-muted-foreground hover:text-foreground"
-        >
-          ← {game.season.name} schedule
-        </Link>
-        <div className="mt-1 flex items-start justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Box Score — {game.location === "AWAY" ? "@ " : ""}
-            {game.opponent}
-            {game.week != null ? ` (Week ${game.week})` : ""}
-          </h1>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <Link
+            href={backHref}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            ← {game.season.name} schedule
+          </Link>
           <div className="flex items-center gap-2">
             {isEdit && (
               <BoxScoreImportMenu
                 seasonId={seasonId}
                 gameId={gid}
+                personas={personas}
                 roster={roster.map((e) => ({
                   playerId: e.playerId,
                   name: e.player.name,
@@ -146,11 +185,36 @@ export default async function BoxScorePage({
             )}
           </div>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Caddo State {game.teamPoints} – {game.oppPoints} {game.opponent}
-          {isEdit ? ". Blanks count as 0; totals roll up to the season & career automatically." : ""}
-        </p>
+
+        <div className="mt-4">
+          <GameScore
+            teamName="Caddo State"
+            teamRecord={teamRecord}
+            oppName={game.opponent}
+            game={game}
+          />
+          {game.week != null && (
+            <p className="mt-2 text-center text-xs uppercase tracking-wide text-muted-foreground">
+              Week {game.week}
+              {game.location === "AWAY" ? " · Away" : game.location === "HOME" ? " · Home" : ""}
+            </p>
+          )}
+          {isEdit && (
+            <p className="mt-1 text-center text-xs text-muted-foreground">
+              Blanks count as 0; totals roll up to the season &amp; career automatically.
+            </p>
+          )}
+        </div>
       </div>
+
+      <GameSummarySection
+        seasonId={seasonId}
+        gameId={gid}
+        summary={game.summary}
+        personas={personas}
+        saveAction={updateGameSummary}
+        regenerateAction={generateGameSummaryAction}
+      />
 
       {notoRanked.length > 0 && (
         <section className="space-y-2">
@@ -203,12 +267,55 @@ export default async function BoxScorePage({
         </section>
       )}
 
+      {isEdit ? (
+        <>
+          {game.plays.length > 0 && (
+            <ScoreReconcile
+              plays={game.plays}
+              game={game}
+              teamName="Caddo State"
+              oppName={game.opponent}
+            />
+          )}
+          <PlayByPlayEditor
+            seasonId={seasonId}
+            gameId={gid}
+            plays={game.plays}
+            teamName="Caddo State"
+            oppName={game.opponent}
+            updateAction={updateGamePlay}
+            deleteAction={deleteGamePlay}
+            setPossessionAction={setPlaysPossession}
+            setBoundaryAction={setPlayDriveBoundary}
+            addAction={addGamePlay}
+            deleteDriveAction={deleteDrive}
+            deleteAllAction={deleteAllPlays}
+          />
+        </>
+      ) : game.plays.length > 0 ? (
+        <PlayByPlay plays={game.plays} teamName="Caddo State" oppName={game.opponent} />
+      ) : null}
+
       {!isEdit ? (
-        <BoxScoreRead
-          game={game}
-          lines={lines}
-          teamStats={game.teamStats}
-          oppStats={game.oppStats}
+        <BoxScoreReadTabs
+          teamName="Caddo State"
+          oppName={game.opponent}
+          teamStats={
+            <TeamStatsPanel
+              game={game}
+              teamLines={lines}
+              oppLines={oppLines}
+              teamStats={game.teamStats}
+              oppStats={game.oppStats}
+              plays={game.plays}
+            />
+          }
+          ourPlayers={<PlayerBoxTables lines={lines} />}
+          oppPlayers={
+            oppLines.length > 0 ? (
+              <OppBoxScoreRead oppName={game.opponent} lines={oppLines} />
+            ) : null
+          }
         />
       ) : (
         <>
@@ -245,7 +352,12 @@ export default async function BoxScorePage({
           <Card>
             <CardHeader>
               <CardTitle>Team stats</CardTitle>
-              <CardDescription>Caddo State team totals for this game.</CardDescription>
+              <CardDescription>
+                The box score derives Caddo State&rsquo;s yardage, plays, downs, turnovers and red
+                zone from the player lines &amp; play-by-play automatically — leave these blank to
+                use that. Anything you DO enter here overrides the derived value; penalties and
+                time of possession can only be set here.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <SaveForm
@@ -271,8 +383,9 @@ export default async function BoxScorePage({
             <CardHeader>
               <CardTitle>Opposing team stats</CardTitle>
               <CardDescription>
-                {game.opponent}&rsquo;s team totals — what our defense gave up (yards,
-                first downs, etc.). We don&rsquo;t track opposing player stats.
+                {game.opponent}&rsquo;s yardage, plays, downs and red zone are derived from their
+                player lines &amp; the play-by-play too — anything you enter here overrides it.
+                Penalties and time of possession can only be set here. Their player lines go below.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -313,6 +426,22 @@ export default async function BoxScorePage({
               gameId={gid}
               rows={statRows}
               roster={addCandidates}
+            />
+          </div>
+
+          {/* ---- Opponent player lines (manual) ---- */}
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-lg font-semibold">{game.opponent} player stat lines</h2>
+              <p className="text-sm text-muted-foreground">
+                Opposing players aren&rsquo;t roster records — just named lines on this game.
+              </p>
+            </div>
+            <OppPlayerStatTable
+              seasonId={seasonId}
+              gameId={gid}
+              oppName={game.opponent}
+              rows={oppStatRows}
             />
           </div>
 

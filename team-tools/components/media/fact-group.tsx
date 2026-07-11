@@ -55,13 +55,13 @@ export function FactGroup({
           {facts.map((f) => {
             const injected = f.active && f.importance >= FACT_AUTOINJECT_THRESHOLD;
             return (
-              <div key={f.id} className="flex items-start gap-2">
-                <SaveForm action={updateFact} successText="Fact saved" className="flex flex-1 items-start gap-2">
+              <div key={f.id} className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <SaveForm action={updateFact} successText="Fact saved" className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-start">
                   <input type="hidden" name="id" value={f.id} />
                   <input type="hidden" name="sortOrder" value={f.sortOrder} />
                   <input type="hidden" name="_revalidate" value={revalidate} />
-                  <textarea name="body" defaultValue={f.body} className={textareaClass + " flex-1"} />
-                  <div className="flex w-36 flex-col items-end gap-2">
+                  <textarea name="body" defaultValue={f.body} className={textareaClass + " w-full flex-1"} />
+                  <div className="flex w-full flex-row flex-wrap items-center justify-end gap-2 sm:w-36 sm:flex-col sm:items-end">
                     <span
                       className={
                         "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide " +
@@ -97,16 +97,18 @@ export function FactGroup({
             <p className="text-sm text-muted-foreground italic">No {title.toLowerCase()} facts yet.</p>
           )}
 
-          <SaveForm action={createFact} successText="Fact added" className="flex items-start gap-2 border-t pt-3">
+          <SaveForm action={createFact} successText="Fact added" className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-start">
             <input type="hidden" name="scope" value={scope} />
             <input type="hidden" name="_revalidate" value={revalidate} />
             {seasonField}
-            <textarea name="body" placeholder={`Add a ${title.toLowerCase()} fact…`} className={textareaClass + " flex-1"} />
-            <label className="flex w-36 items-center gap-1.5 text-xs text-muted-foreground">
-              Importance
-              <Input type="number" name="importance" min={0} max={100} defaultValue={50} className="h-8 w-16" />
-            </label>
-            <Button type="submit" size="sm">Add</Button>
+            <textarea name="body" placeholder={`Add a ${title.toLowerCase()} fact…`} className={textareaClass + " w-full flex-1"} />
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                Importance
+                <Input type="number" name="importance" min={0} max={100} defaultValue={50} className="h-8 w-16" />
+              </label>
+              <Button type="submit" size="sm">Add</Button>
+            </div>
           </SaveForm>
         </div>
       )}

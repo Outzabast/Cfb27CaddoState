@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Image as ImageIcon,
   AudioLines,
+  Mic,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { MediaInbox } from "@/components/media/media-inbox";
@@ -184,6 +185,10 @@ export default async function MediaHubPage({
           <Link href="/media/new" className={buttonVariants({ size: "sm" })}>
             <Plus className="h-4 w-4" />
             New post
+          </Link>
+          <Link href="/press/new" className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <Mic className="h-4 w-4" />
+            Press conference
           </Link>
           <Link href="/media/space" className={buttonVariants({ variant: "outline", size: "sm" })}>
             <Radio className="h-4 w-4" />

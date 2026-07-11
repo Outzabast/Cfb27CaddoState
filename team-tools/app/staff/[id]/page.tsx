@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { STAFF_ROLE_LABELS } from "@/lib/staff";
+import { winLossRecord } from "@/lib/season-record";
 import { updateStaffProfile } from "../actions";
 import { SaveForm } from "@/components/save-form";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -43,7 +44,9 @@ export default async function StaffDetailPage({
     where: { id: staffId },
     include: {
       seasonStaff: {
-        include: { season: true },
+        include: {
+          season: { include: { games: { select: { teamPoints: true, oppPoints: true } } } },
+        },
         orderBy: { season: { startYear: "desc" } },
       },
     },
@@ -55,6 +58,10 @@ export default async function StaffDetailPage({
     SELECT photo IS NOT NULL AS has FROM staff WHERE id = ${staffId}`;
 
   const roles = [...new Set(staff.seasonStaff.map((s) => STAFF_ROLE_LABELS[s.role]))];
+  // Tenure record — dedupe seasons (a coach could hold two roles in one year).
+  const tenureGames = new Map<number, { teamPoints: number; oppPoints: number }[]>();
+  for (const ss of staff.seasonStaff) tenureGames.set(ss.seasonId, ss.season.games);
+  const tenureRecord = winLossRecord([...tenureGames.values()].flat());
 
   return (
     <div className="space-y-8">
@@ -93,6 +100,7 @@ export default async function StaffDetailPage({
               <p className="mt-1 text-sm text-muted-foreground">{roles.join(" · ") || "Staff"}</p>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+              <Info label="Record" value={tenureRecord} />
               <Info label="Program Notoriety" value={String(staff.overallNotoriety)} />
               <Info label="Seasons" value={String(staff.seasonStaff.length)} />
             </div>
@@ -113,6 +121,7 @@ export default async function StaffDetailPage({
                     <TableRow>
                       <TableHead>Season</TableHead>
                       <TableHead>Role</TableHead>
+                      <TableHead>Record</TableHead>
                       <TableHead className="text-right">Notoriety</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -125,6 +134,7 @@ export default async function StaffDetailPage({
                           </Link>
                         </TableCell>
                         <TableCell>{STAFF_ROLE_LABELS[s.role]}</TableCell>
+                        <TableCell className="tabular-nums">{winLossRecord(s.season.games)}</TableCell>
                         <TableCell className="text-right font-bold tabular-nums">
                           {s.seasonNotoriety}
                         </TableCell>

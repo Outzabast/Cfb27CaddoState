@@ -48,6 +48,7 @@ export const MEDIA_SCOPE_LABELS: Record<MediaScope, string> = {
   GAME: "Game",
   TEAM: "Team",
   RECRUIT: "Recruit",
+  STAFF: "Staff",
 };
 
 export const MEDIA_STATUS_LABELS: Record<MediaGenStatus, string> = {

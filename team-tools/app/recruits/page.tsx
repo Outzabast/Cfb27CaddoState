@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { RecruitImportButton } from "@/components/ocr/recruit-import";
 import {
   RECRUIT_STATUS_LABELS,
   RECRUIT_STATUS_ORDER,
@@ -67,7 +68,7 @@ export default async function RecruitsPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="eyebrow">Caddo State</div>
           <h1 className="font-heading text-3xl font-extrabold uppercase leading-none tracking-tight text-primary">
@@ -77,9 +78,12 @@ export default async function RecruitsPage({
             Prospects by class, ranked. Sign one to turn them into a roster player.
           </p>
         </div>
-        <Link href="/recruits/new" className={buttonVariants({ size: "sm" })}>
-          Add recruit
-        </Link>
+        <div className="flex items-center gap-2">
+          <RecruitImportButton seasons={seasons} defaultSeasonId={seasonId ?? seasons[0]?.id} />
+          <Link href="/recruits/new" className={buttonVariants({ size: "sm" })}>
+            Add recruit
+          </Link>
+        </div>
       </div>
 
       <form method="get" className="flex flex-wrap items-end gap-3">

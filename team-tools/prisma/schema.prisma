@@ -85,11 +85,128 @@ model Player {
   mediaTags       MediaTag[]
   mediaEvents     MediaEvent[]
   notorietyEvents NotorietyEvent[]
+  rosterEvents    PlayerRosterEvent[]
+  pressConferences PressConference[]
   /// The recruit record this player came from, if they were signed out of a
   /// recruiting class (null for players added directly to a roster).
   recruit         Recruit?
 
   @@map("players")
+}
+
+/// The kind of roster transaction a PlayerRosterEvent records.
+enum RosterEventType {
+  JOINED_RECRUIT
+  JOINED_TRANSFER
+  NAMED_STARTER
+  LOST_STARTER
+  GRADUATED
+  TRANSFERRED_OUT
+  OTHER
+
+  @@map("roster_event_type")
+}
+
+/// A dated entry in a player's roster history: how/when they joined (signed out of
+/// high school, transferred in from another program), left (graduated, transferred
+/// out), or changed standing (named starter, lost the job). Some are written
+/// automatically at the moment they happen (signing, the offseason, a starter
+/// toggle); all can also be added by hand on the player profile.
+model PlayerRosterEvent {
+  id       Int             @id @default(autoincrement())
+  playerId Int             @map("player_id")
+  /// The season the event belongs to (drives chronological ordering + labels).
+  seasonId Int?            @map("season_id")
+  type     RosterEventType
+  /// Other program involved — the school a transfer came from / left for.
+  counterparty String?
+  note      String?
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  player Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  season Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@index([playerId])
+  @@map("player_roster_events")
+}
+
+/// Why a press conference is being held. Pre/post GAME is derived from the game's
+/// result; SEASON pressers are explicitly pre or post.
+enum PressConferenceType {
+  PRE_GAME
+  POST_GAME
+  PRE_SEASON
+  POST_SEASON
+
+  @@map("press_conference_type")
+}
+
+enum PressConferenceStatus {
+  ACTIVE
+  DONE
+
+  @@map("press_conference_status")
+}
+
+/// An interactive press conference: reporters (author personas) question a player
+/// or coach who answers. Built live — each answer prompts the next question (a
+/// follow-up or a new reporter) up to the caps. Finalized into a Q&A transcript.
+model PressConference {
+  id     Int                   @id @default(autoincrement())
+  type   PressConferenceType
+  status PressConferenceStatus @default(ACTIVE)
+
+  // At the podium (exactly one).
+  playerId Int? @map("player_id")
+  staffId  Int? @map("staff_id")
+  // Context anchor: a game (pre/post) or a season (pre/post).
+  gameId   Int? @map("game_id")
+  seasonId Int? @map("season_id")
+
+  // Which author personas ask, and the caps.
+  personaIds    Int[] @default([]) @map("persona_ids")
+  maxPerPersona Int   @default(2)  @map("max_per_persona")
+  maxTotal      Int   @default(10) @map("max_total")
+  /// When true, each question is voiced with the asking persona's TTS voice.
+  speakQuestions Boolean @default(false) @map("speak_questions")
+
+  /// The transcript Media produced when finished (null while active).
+  mediaId Int? @unique @map("media_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  player    Player?                   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  staff     Staff?                    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  game      Game?                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  season    Season?                   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  media     Media?                    @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+  questions PressConferenceQuestion[]
+
+  @@map("press_conferences")
+}
+
+/// One exchange: a reporter's question and the subject's answer (answer null until
+/// responded). `order` is the transcript sequence.
+model PressConferenceQuestion {
+  id           Int      @id @default(autoincrement())
+  conferenceId Int      @map("conference_id")
+  order        Int
+  /// Asking persona (denormalized name survives persona deletion); null = moderator.
+  personaId   Int?    @map("persona_id")
+  personaName String  @map("persona_name")
+  question    String
+  answer      String?
+  isFollowUp  Boolean @default(false) @map("is_follow_up")
+  /// Spoken question audio (WAV) when the conference voices questions.
+  audio       Bytes?
+  audioMime   String? @map("audio_mime")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  conference PressConference @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+
+  @@index([conferenceId])
+  @@map("press_conference_questions")
 }
 
 /// A manually-attributed notoriety bump: "this happened, and it's worth N to the
@@ -136,6 +253,8 @@ model Season {
   mediaEvents MediaEvent[]
   facts       Fact[]
   recruits    Recruit[]
+  rosterEvents PlayerRosterEvent[]
+  pressConferences PressConference[]
 
   @@map("seasons")
 }
@@ -288,7 +407,10 @@ model Staff {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  seasonStaff SeasonStaff[]
+  seasonStaff      SeasonStaff[]
+  media            Media[]
+  mediaEvents      MediaEvent[]
+  pressConferences PressConference[]
 
   @@map("staff")
 }
@@ -368,6 +490,9 @@ model Game {
   /// Optional short billing for the game — "CUSA title game", "bowl: Frisco Bowl",
   /// "rivalry week". Shown on the schedule and fed to media for richer coverage.
   note       String?
+  /// A one-paragraph game summary, generated from the play-by-play in a chosen
+  /// persona's voice (editable). Shown on the box score under the score.
+  summary    String?
   // Final score (kept as the source of truth for W/L + season aggregation). When
   // quarter scores are entered, these are set to the sum of the quarters + OT.
   teamPoints Int          @default(0) @map("team_points")
@@ -386,16 +511,84 @@ model Game {
   createdAt  DateTime     @default(now()) @map("created_at")
 
   season       Season           @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  playerStats  GamePlayerStat[]
-  teamStats    GameTeamStat?
-  oppStats     GameOppStat?
-  scoringPlays ScoringPlay[]
+  playerStats    GamePlayerStat[]
+  oppPlayerStats GameOppPlayerStat[]
+  teamStats      GameTeamStat?
+  oppStats       GameOppStat?
+  scoringPlays   ScoringPlay[]
+  plays        GamePlay[]
   media        Media[]
   mediaTags    MediaTag[]
   mediaEvents  MediaEvent[]
+  pressConferences PressConference[]
 
   @@unique([seasonId, week])
   @@map("games")
+}
+
+/// One play from a game's in-game play-by-play (drive/flow log), imported by OCR.
+/// Drives are derived on read by grouping consecutive plays with the same
+/// possessing `team`. Gives media rich, sequential recall of how a game unfolded.
+model GamePlay {
+  id      Int         @id @default(autoincrement())
+  gameId  Int         @map("game_id")
+  quarter Int
+  /// Game clock the play started at, "mm:ss" as shown.
+  clock   String?
+  /// Which side had the ball (TEAM = Caddo State).
+  team    ScoringTeam
+  /// The down-and-distance / field-position line, e.g. "1st & 10 on NIU 25".
+  situation String?
+  /// The play description, e.g. "Ryan Browne pass to Joe Stein for 6 yards."
+  description String
+  /// Chronological order across the whole game.
+  sortOrder Int @default(0) @map("sort_order")
+  /// Manual drive-boundary override for the derived play-by-play grouping.
+  /// null = automatic (new drive when possession changes); true = force a split
+  /// (start a new drive here even on unchanged possession); false = force a merge
+  /// (keep this play on the previous drive even though possession changed).
+  newDrive Boolean? @map("new_drive")
+  /// Typed outcome of the play — drives the derived score and drive result without
+  /// parsing the description text. Legacy rows default to SCRIMMAGE.
+  playType PlayType @default(SCRIMMAGE) @map("play_type")
+  /// Points this play put on the board (0 for non-scoring plays).
+  points Int @default(0)
+  /// Which team the points went to. Usually the possessing team, but the OTHER
+  /// team on a pick-six / return TD / safety. null when no points were scored.
+  scoringTeam ScoringTeam? @map("scoring_team")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@map("game_plays")
+}
+
+/// The typed result of a play-by-play play. Distinguishes scoring plays and
+/// drive-concluders so the score and drive outcome are computed from data, not
+/// guessed from the description text. Points/scoringTeam carry the actual score
+/// (so a pick-six is INTERCEPTION with points on the defense).
+enum PlayType {
+  /// Ordinary rush/pass that continues the drive (the default).
+  SCRIMMAGE
+  TOUCHDOWN
+  EXTRA_POINT
+  EXTRA_POINT_MISSED
+  TWO_POINT
+  TWO_POINT_FAILED
+  FIELD_GOAL
+  FIELD_GOAL_MISSED
+  SAFETY
+  PUNT
+  INTERCEPTION
+  FUMBLE
+  TURNOVER_ON_DOWNS
+  KICKOFF
+  PENALTY
+  KNEEL
+  END_PERIOD
+  OTHER
+
+  @@map("play_type")
 }
 
 /// Which side scored a play. TEAM = Caddo State, OPP = the opponent.
@@ -516,17 +709,30 @@ model GameTeamStat {
 
   // --- Offensive ---
   firstDowns       Int @default(0) @map("first_downs")
+  totalOffense     Int @default(0) @map("total_offense")
   totalPlays       Int @default(0) @map("total_plays")
   totalYards       Int @default(0) @map("total_yards")
+  passCmp          Int @default(0) @map("pass_cmp")
+  passAtt          Int @default(0) @map("pass_att")
   passYds          Int @default(0) @map("pass_yds")
+  passTd           Int @default(0) @map("pass_td")
+  rushAtt          Int @default(0) @map("rush_att")
   rushYds          Int @default(0) @map("rush_yds")
+  rushTd           Int @default(0) @map("rush_td")
   thirdDownConv    Int @default(0) @map("third_down_conv")
   thirdDownAtt     Int @default(0) @map("third_down_att")
   fourthDownConv   Int @default(0) @map("fourth_down_conv")
   fourthDownAtt    Int @default(0) @map("fourth_down_att")
+  twoPointConv     Int @default(0) @map("two_point_conv")
+  twoPointAtt      Int @default(0) @map("two_point_att")
+  redZoneTd        Int @default(0) @map("red_zone_td")
+  redZoneFg        Int @default(0) @map("red_zone_fg")
+  redZoneTrips     Int @default(0) @map("red_zone_trips")
+  turnovers        Int @default(0)
+  interceptions    Int @default(0)
+  fumblesLost      Int @default(0) @map("fumbles_lost")
   penalties        Int @default(0)
   penaltyYds       Int @default(0) @map("penalty_yds")
-  turnovers        Int @default(0)
   timeOfPossession Int @default(0) @map("time_of_possession_sec")
 
   // --- Defensive ---
@@ -535,15 +741,18 @@ model GameTeamStat {
   takeaways      Int   @default(0)
   defTd          Int   @default(0) @map("def_td")
 
-  // --- Kicking ---
-  fgMade  Int @default(0) @map("fg_made")
-  fgAtt   Int @default(0) @map("fg_att")
-  xpMade  Int @default(0) @map("xp_made")
-  xpAtt   Int @default(0) @map("xp_att")
-  punts   Int @default(0)
-  puntYds Int @default(0) @map("punt_yds")
+  // --- Kicking / punting ---
+  fgMade  Int   @default(0) @map("fg_made")
+  fgAtt   Int   @default(0) @map("fg_att")
+  xpMade  Int   @default(0) @map("xp_made")
+  xpAtt   Int   @default(0) @map("xp_att")
+  punts   Int   @default(0)
+  puntYds Int   @default(0) @map("punt_yds")
+  puntAvg Float @default(0) @map("punt_avg")
 
-  // --- Other ---
+  // --- Returns ---
+  prYds     Int @default(0) @map("pr_yds")
+  krYds     Int @default(0) @map("kr_yds")
   returnYds Int @default(0) @map("return_yds")
   returnTd  Int @default(0) @map("return_td")
 
@@ -561,17 +770,30 @@ model GameOppStat {
   gameId Int @unique @map("game_id")
 
   firstDowns       Int @default(0) @map("first_downs")
+  totalOffense     Int @default(0) @map("total_offense")
   totalPlays       Int @default(0) @map("total_plays")
   totalYards       Int @default(0) @map("total_yards")
+  passCmp          Int @default(0) @map("pass_cmp")
+  passAtt          Int @default(0) @map("pass_att")
   passYds          Int @default(0) @map("pass_yds")
+  passTd           Int @default(0) @map("pass_td")
+  rushAtt          Int @default(0) @map("rush_att")
   rushYds          Int @default(0) @map("rush_yds")
+  rushTd           Int @default(0) @map("rush_td")
   thirdDownConv    Int @default(0) @map("third_down_conv")
   thirdDownAtt     Int @default(0) @map("third_down_att")
   fourthDownConv   Int @default(0) @map("fourth_down_conv")
   fourthDownAtt    Int @default(0) @map("fourth_down_att")
+  twoPointConv     Int @default(0) @map("two_point_conv")
+  twoPointAtt      Int @default(0) @map("two_point_att")
+  redZoneTd        Int @default(0) @map("red_zone_td")
+  redZoneFg        Int @default(0) @map("red_zone_fg")
+  redZoneTrips     Int @default(0) @map("red_zone_trips")
+  turnovers        Int @default(0)
+  interceptions    Int @default(0)
+  fumblesLost      Int @default(0) @map("fumbles_lost")
   penalties        Int @default(0)
   penaltyYds       Int @default(0) @map("penalty_yds")
-  turnovers        Int @default(0)
   timeOfPossession Int @default(0) @map("time_of_possession_sec")
 
   sacks          Float @default(0)
@@ -579,19 +801,88 @@ model GameOppStat {
   takeaways      Int   @default(0)
   defTd          Int   @default(0) @map("def_td")
 
-  fgMade  Int @default(0) @map("fg_made")
-  fgAtt   Int @default(0) @map("fg_att")
-  xpMade  Int @default(0) @map("xp_made")
-  xpAtt   Int @default(0) @map("xp_att")
-  punts   Int @default(0)
-  puntYds Int @default(0) @map("punt_yds")
+  fgMade  Int   @default(0) @map("fg_made")
+  fgAtt   Int   @default(0) @map("fg_att")
+  xpMade  Int   @default(0) @map("xp_made")
+  xpAtt   Int   @default(0) @map("xp_att")
+  punts   Int   @default(0)
+  puntYds Int   @default(0) @map("punt_yds")
+  puntAvg Float @default(0) @map("punt_avg")
 
+  prYds     Int @default(0) @map("pr_yds")
+  krYds     Int @default(0) @map("kr_yds")
   returnYds Int @default(0) @map("return_yds")
   returnTd  Int @default(0) @map("return_td")
 
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   @@map("game_opp_stats")
+}
+
+/// An OPPONENT player's stat line for one game. Opponents aren't Player objects
+/// (we don't track them across seasons), so these are just named lines attached to
+/// the game — same stat columns as GamePlayerStat, minus notoriety. Feeds richer
+/// recaps ("their QB threw for 358") without polluting our player roster.
+model GameOppPlayerStat {
+  id         Int    @id @default(autoincrement())
+  gameId     Int    @map("game_id")
+  playerName String @map("player_name")
+  position   String? @db.VarChar(8)
+
+  // Passing
+  passCmp  Int @default(0) @map("pass_cmp")
+  passAtt  Int @default(0) @map("pass_att")
+  passYds  Int @default(0) @map("pass_yds")
+  passTd   Int @default(0) @map("pass_td")
+  passInt  Int @default(0) @map("pass_int")
+  passLong Int @default(0) @map("pass_long")
+  sacked   Int @default(0)
+  // Rushing
+  rushAtt  Int @default(0) @map("rush_att")
+  rushYds  Int @default(0) @map("rush_yds")
+  rushTd   Int @default(0) @map("rush_td")
+  rushLong Int @default(0) @map("rush_long")
+  // Receiving
+  targets Int @default(0)
+  rec     Int @default(0)
+  recYds  Int @default(0) @map("rec_yds")
+  recTd   Int @default(0) @map("rec_td")
+  recLong Int @default(0) @map("rec_long")
+  // Defensive
+  tacklesSolo    Int   @default(0) @map("tackles_solo")
+  tacklesAst     Int   @default(0) @map("tackles_ast")
+  tacklesForLoss Float @default(0) @map("tackles_for_loss")
+  sacks          Float @default(0)
+  qbHurries      Int   @default(0) @map("qb_hurries")
+  defInt         Int   @default(0) @map("def_int")
+  intYds         Int   @default(0) @map("int_yds")
+  passesDefended Int   @default(0) @map("passes_defended")
+  forcedFumbles  Int   @default(0) @map("forced_fumbles")
+  fumblesRec     Int   @default(0) @map("fumbles_recovered")
+  defTd          Int   @default(0) @map("def_td")
+  // Kicking / punting
+  fgMade   Int @default(0) @map("fg_made")
+  fgAtt    Int @default(0) @map("fg_att")
+  fgLong   Int @default(0) @map("fg_long")
+  xpMade   Int @default(0) @map("xp_made")
+  xpAtt    Int @default(0) @map("xp_att")
+  punts    Int @default(0)
+  puntYds  Int @default(0) @map("punt_yds")
+  puntLong Int @default(0) @map("punt_long")
+  // Returns / fumbles
+  krRet       Int @default(0) @map("kr_ret")
+  krYds       Int @default(0) @map("kr_yds")
+  krTd        Int @default(0) @map("kr_td")
+  prRet       Int @default(0) @map("pr_ret")
+  prYds       Int @default(0) @map("pr_yds")
+  prTd        Int @default(0) @map("pr_td")
+  fumbles     Int @default(0)
+  fumblesLost Int @default(0) @map("fumbles_lost")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId])
+  @@map("game_opp_player_stats")
 }
 
 /// What kind of media a piece is. Only ARTICLE ships today; the enum is the seam
@@ -615,6 +906,7 @@ enum MediaScope {
   GAME
   TEAM
   RECRUIT
+  STAFF
 
   @@map("media_scope")
 }
@@ -681,6 +973,7 @@ model Media {
   gameId    Int? @map("game_id")
   seasonId  Int? @map("season_id")
   recruitId Int? @map("recruit_id")
+  staffId   Int? @map("staff_id")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -690,9 +983,11 @@ model Media {
   game          Game?          @relation(fields: [gameId], references: [id], onDelete: Cascade)
   season        Season?        @relation(fields: [seasonId], references: [id], onDelete: Cascade)
   recruit       Recruit?       @relation(fields: [recruitId], references: [id], onDelete: Cascade)
+  staff         Staff?         @relation(fields: [staffId], references: [id], onDelete: Cascade)
   mediaEvent    MediaEvent?    @relation(fields: [mediaEventId], references: [id], onDelete: Cascade)
   tags          MediaTag[]
   socialReplies SocialReply[]
+  pressConference PressConference?
 
   @@index([scope])
   @@index([viewed])
@@ -700,6 +995,7 @@ model Media {
   @@index([gameId])
   @@index([seasonId])
   @@index([recruitId])
+  @@index([staffId])
   @@index([mediaEventId])
   @@map("media")
 }
@@ -767,6 +1063,7 @@ model MediaEvent {
   gameId    Int? @map("game_id")
   seasonId  Int? @map("season_id")
   recruitId Int? @map("recruit_id")
+  staffId   Int? @map("staff_id")
 
   // The editor's added context. `personaIds` = which author personas to write as
   // (one piece each; empty = a single piece in the default voice). `playerIds` =
@@ -788,6 +1085,7 @@ model MediaEvent {
   game    Game?    @relation(fields: [gameId], references: [id], onDelete: Cascade)
   season  Season?  @relation(fields: [seasonId], references: [id], onDelete: Cascade)
   recruit Recruit? @relation(fields: [recruitId], references: [id], onDelete: Cascade)
+  staff   Staff?   @relation(fields: [staffId], references: [id], onDelete: Cascade)
   media   Media[]
 
   @@index([status])

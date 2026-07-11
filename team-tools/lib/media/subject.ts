@@ -20,6 +20,8 @@ import {
   starString,
 } from "@/lib/recruits";
 import { STAFF_ROLE_LABELS, STAFF_ROLES } from "@/lib/staff";
+import { winLossRecord } from "@/lib/season-record";
+import { groupDrives, redZoneByTeam, downEfficiencyByTeam, type PlayLite } from "@/lib/play-by-play";
 
 const STAT_FIELDS = PLAYER_STAT_GROUPS.flatMap((g) => g.fields);
 function hasAnyStat(line: Record<string, number>): boolean {
@@ -40,6 +42,44 @@ function lineToText(l: BoxLine): string {
     parts.push(`${cat.title}: ${cells}`);
   }
   return parts.join(" | ");
+}
+
+/** A coach feature's data: identity, role-by-season with each year's team record,
+ *  tenure record, and program notoriety. */
+export async function describeStaffFeature(staffId: number): Promise<string> {
+  const staff = await db.staff.findUnique({
+    where: { id: staffId },
+    include: {
+      seasonStaff: {
+        include: { season: { include: { games: { select: { teamPoints: true, oppPoints: true } } } } },
+        orderBy: { season: { startYear: "desc" } },
+      },
+    },
+    omit: { photo: true },
+  });
+  if (!staff) throw new Error("Staff member not found.");
+
+  const tenureGames = new Map<number, { teamPoints: number; oppPoints: number }[]>();
+  for (const ss of staff.seasonStaff) tenureGames.set(ss.seasonId, ss.season.games);
+
+  const out: string[] = [];
+  out.push(`STAFF FEATURE — ${staff.name}`);
+  const roles = [...new Set(staff.seasonStaff.map((s) => STAFF_ROLE_LABELS[s.role]))];
+  if (roles.length) out.push(`Role(s): ${roles.join(", ")}`);
+  out.push(`Tenure record at Caddo State: ${winLossRecord([...tenureGames.values()].flat())}`);
+  out.push(`Program notoriety: ${staff.overallNotoriety}`);
+  if (staff.seasonStaff.length) {
+    out.push("");
+    out.push("By season:");
+    for (const ss of staff.seasonStaff) {
+      out.push(
+        `  ${ss.season.name} — ${STAFF_ROLE_LABELS[ss.role]}, ` +
+          `record ${winLossRecord(ss.season.games)}, season notoriety ${ss.seasonNotoriety}`,
+      );
+    }
+  }
+  if (staff.bio) out.push(`\nBio: ${staff.bio}`);
+  return out.join("\n");
 }
 
 /** The season's coaching staff as a brief block (null when none set). Staff carry
@@ -66,7 +106,9 @@ export async function describeGame(gameId: number): Promise<string> {
       season: true,
       teamStats: true,
       playerStats: { include: { player: { select: { name: true } } } },
+      oppPlayerStats: { orderBy: { playerName: "asc" } },
       scoringPlays: { orderBy: { sortOrder: "asc" } },
+      plays: { orderBy: { sortOrder: "asc" } },
     },
   });
   if (!game) throw new Error("Game not found.");
@@ -135,10 +177,30 @@ export async function describeGame(gameId: number): Promise<string> {
     }
   }
 
-  if (game.teamStats) {
+  if (game.plays.length) {
+    out.push("");
+    out.push(
+      "Drive-by-drive with the running score after each drive (full play-by-play available " +
+        "via the get_play_by_play tool). The score column is the source of truth for how the " +
+        "game unfolded — use it to judge whether it was close, a blowout, or a comeback:",
+    );
+    for (const d of groupDrives(game.plays)) {
+      const who = d.team === "TEAM" ? "Caddo State" : game.opponent;
+      const first = d.plays[0];
+      out.push(
+        `  Q${first.quarter}${first.clock ? ` ${first.clock}` : ""} — ${who}: ${d.plays.length} plays → ` +
+          `${d.result} (Caddo State ${d.teamScore}, ${game.opponent} ${d.oppScore})`,
+      );
+    }
+  }
+
+  if (lines.length || game.plays.length || game.teamStats) {
+    const pbp = game.plays as unknown as PlayLite[];
+    const rz = redZoneByTeam(pbp);
+    const down = downEfficiencyByTeam(pbp);
     out.push("");
     out.push("Team totals (Caddo State):");
-    for (const row of teamStatRows(game.teamStats as unknown as TeamTotals, lines)) {
+    for (const row of teamStatRows((game.teamStats as unknown as TeamTotals) ?? null, lines, rz.team, down.team)) {
       out.push(`  ${row.label}: ${row.value}`);
     }
   }
@@ -154,6 +216,18 @@ export async function describeGame(gameId: number): Promise<string> {
         .filter(Boolean)
         .join(" ");
       out.push(`  ${l.name}${tag ? ` (${tag})` : ""} — ${lineToText(l)}`);
+    }
+  }
+
+  const oppLines = game.oppPlayerStats.filter((s) =>
+    hasAnyStat(s as unknown as Record<string, number>),
+  );
+  if (oppLines.length) {
+    out.push("");
+    out.push(`${game.opponent} individual stat lines:`);
+    for (const s of oppLines) {
+      const tag = s.position ? ` (${s.position})` : "";
+      out.push(`  ${s.playerName}${tag} — ${compactStatSummary(s as unknown as Record<string, number>)}`);
     }
   }
   return out.join("\n");

@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { ChevronDownIcon } from "lucide-react";
 
 import {
-  PLAYER_STAT_GROUPS,
   TEAM_STAT_GROUPS,
   TEAM_PCTS,
   parseStats,
@@ -18,14 +17,17 @@ import {
   SCOREBOARD_FIELDS,
   type OcrResult,
   type OcrScoreboard,
-  type OcrPlayerStatLine,
 } from "@/lib/ocr/kinds";
 import { matchNameIndex, nameKey } from "@/lib/ocr/name-match";
+import { playMergeKey } from "@/lib/play-by-play";
 import {
   commitOcrBoxScore,
   commitOcrPlayerStats,
   commitOcrScoringSummary,
+  commitOcrPlayByPlay,
+  commitOcrOppPlayerStats,
   type OcrPlayerStatInput,
+  type OcrOppPlayerInput,
 } from "@/app/seasons/[id]/schedule/[gameId]/box-score/actions";
 import { OcrFilePicker } from "./ocr-file-picker";
 import { StatFieldGroups } from "@/components/stat-field-groups";
@@ -57,18 +59,26 @@ const invalidRing =
   "border-destructive ring-3 ring-destructive/20 dark:border-destructive/50 dark:ring-destructive/40";
 const classOptions = CLASS_ORDER.map((c) => ({ value: c, label: CLASS_LABELS[c] }));
 
+/** Dedupe key for a timed play across overlapping/repeated screenshots — the same
+ *  shared key the server merge uses (clock normalized so "09:27" == "9:27"). */
+const playDedupeKey = playMergeKey;
+
 export function BoxScoreImportMenu({
   seasonId,
   gameId,
   roster,
+  personas,
 }: {
   seasonId: number;
   gameId: number;
   roster: RosterOption[];
+  personas: { id: number; name: string }[];
 }) {
   const [teamOpen, setTeamOpen] = useState(false);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [oppPlayerOpen, setOppPlayerOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [pbpOpen, setPbpOpen] = useState(false);
 
   return (
     <>
@@ -86,10 +96,16 @@ export function BoxScoreImportMenu({
             Team stats + score from screenshots
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setPlayerOpen(true)}>
-            Player stat lines from screenshots
+            Player stat lines (Caddo State)
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setOppPlayerOpen(true)}>
+            Player stat lines (opponent)
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setSummaryOpen(true)}>
             Scoring summary from screenshots
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setPbpOpen(true)}>
+            Play-by-play from screenshots
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -112,6 +128,19 @@ export function BoxScoreImportMenu({
         gameId={gameId}
         open={summaryOpen}
         onOpenChange={setSummaryOpen}
+      />
+      <PlayByPlayOcrDialog
+        seasonId={seasonId}
+        gameId={gameId}
+        personas={personas}
+        open={pbpOpen}
+        onOpenChange={setPbpOpen}
+      />
+      <OppPlayerStatsOcrDialog
+        seasonId={seasonId}
+        gameId={gameId}
+        open={oppPlayerOpen}
+        onOpenChange={setOppPlayerOpen}
       />
     </>
   );
@@ -680,12 +709,12 @@ function ScoringSummaryOcrDialog({
     setShots((s) => s + 1);
     setRows((prev) => {
       let id = nextId;
-      const seen = new Set(prev.map((r) => `${r.quarter}|${r.clock}|${r.description.toLowerCase()}`));
+      const seen = new Set(prev.map((r) => playDedupeKey(r.quarter, r.clock, r.description)));
       const added: ScoringRow[] = [];
       for (const p of result.plays) {
         const quarter = p.quarter && p.quarter >= 1 && p.quarter <= 5 ? p.quarter : 1;
         const clock = p.clock ?? "";
-        const key = `${quarter}|${clock}|${p.description.toLowerCase()}`;
+        const key = playDedupeKey(quarter, clock, p.description);
         if (seen.has(key)) continue;
         seen.add(key);
         added.push({
@@ -786,7 +815,7 @@ function ScoringSummaryOcrDialog({
               )}
               <div className="space-y-1.5">
                 {rows.map((r) => (
-                  <div key={r.id} className="flex items-center gap-1.5">
+                  <div key={r.id} className="flex flex-wrap items-center gap-1.5">
                     <select
                       value={r.quarter}
                       onChange={(e) => update(r.id, { quarter: Number(e.target.value) })}
@@ -819,7 +848,7 @@ function ScoringSummaryOcrDialog({
                       value={r.description}
                       onChange={(e) => update(r.id, { description: e.target.value })}
                       placeholder="Scorer, play (PAT)"
-                      className="h-8 flex-1"
+                      className="h-8 min-w-[10rem] flex-1"
                       aria-label="Play"
                     />
                     <Input
@@ -853,6 +882,413 @@ function ScoringSummaryOcrDialog({
           )}
           <Button type="button" onClick={doImport} disabled={rows.length === 0 || pending}>
             {pending ? "Saving…" : `Save ${rows.length} play${rows.length === 1 ? "" : "s"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------ Play-by-play ------------------------------ */
+
+type PlayRow = {
+  id: number;
+  quarter: number;
+  team: "team" | "opp";
+  clock: string;
+  situation: string;
+  description: string;
+  /** Typed outcome + scoring carried through from OCR (corrected later in the editor). */
+  playType: string | null;
+  points: number | null;
+  scoringTeam: "team" | "opp" | null;
+};
+
+function PlayByPlayOcrDialog({
+  seasonId,
+  gameId,
+  personas,
+  open,
+  onOpenChange,
+}: {
+  seasonId: number;
+  gameId: number;
+  personas: { id: number; name: string }[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const [rows, setRows] = useState<PlayRow[]>([]);
+  const [shots, setShots] = useState(0);
+  const [nextId, setNextId] = useState(0);
+  const [pending, startTransition] = useTransition();
+  const [genSummary, setGenSummary] = useState(false);
+  const [summaryPersona, setSummaryPersona] = useState<number>(personas[0]?.id ?? 0);
+
+  function mergeResult(result: OcrResult) {
+    if (result.kind !== "playByPlay") return;
+    setShots((s) => s + 1);
+    setRows((prev) => {
+      let id = nextId;
+      const seen = new Set(prev.map((r) => playDedupeKey(r.quarter, r.clock, r.description)));
+      // Carry possession forward when the model returns null (unknown).
+      let lastTeam: "team" | "opp" = prev[prev.length - 1]?.team ?? "team";
+      const added: PlayRow[] = [];
+      for (const p of result.plays) {
+        const quarter = p.quarter && p.quarter >= 1 && p.quarter <= 5 ? p.quarter : 1;
+        const clock = p.clock ?? "";
+        const team = p.team ?? lastTeam;
+        lastTeam = team;
+        const key = playDedupeKey(quarter, clock, p.description);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        added.push({
+          id: id++,
+          quarter,
+          team,
+          clock,
+          situation: p.situation ?? "",
+          description: p.description,
+          playType: p.playType ?? null,
+          points: p.points ?? null,
+          scoringTeam: p.scoringTeam ?? null,
+        });
+      }
+      setNextId(id);
+      return [...prev, ...added];
+    });
+  }
+
+  function reset() {
+    setRows([]);
+    setShots(0);
+  }
+  const update = (id: number, patch: Partial<PlayRow>) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const remove = (id: number) => setRows((rs) => rs.filter((r) => r.id !== id));
+
+  function doImport() {
+    const plays = rows
+      .filter((r) => r.description.trim())
+      .map((r) => ({
+        quarter: r.quarter,
+        team: r.team,
+        clock: /^\d{1,2}:\d{2}$/.test(r.clock.trim()) ? r.clock.trim() : null,
+        situation: r.situation.trim() || null,
+        description: r.description.trim(),
+        playType: r.playType,
+        points: r.points,
+        scoringTeam: r.scoringTeam,
+      }));
+    startTransition(async () => {
+      const id = toast.loading(genSummary ? "Saving + writing summary…" : "Saving play-by-play…");
+      try {
+        await commitOcrPlayByPlay(seasonId, gameId, plays, {
+          generateSummary: genSummary,
+          summaryPersonaId: genSummary && summaryPersona > 0 ? summaryPersona : null,
+        });
+        toast.success(`Saved ${plays.length} play${plays.length === 1 ? "" : "s"}`, { id });
+        reset();
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Save failed", { id });
+      }
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Import play-by-play</DialogTitle>
+          <DialogDescription>
+            Add the in-game play-by-play screenshots (one per quarter, or scrolled
+            sections) — they stack in order. Review, remove any misreads, then save.
+            This replaces the game&rsquo;s current play-by-play.
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogBody className="space-y-3">
+          <OcrFilePicker
+            kind="playByPlay"
+            onResult={mergeResult}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more"}
+            hint={
+              shots > 0
+                ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} play${rows.length === 1 ? "" : "s"}`
+                : "Capture the play-by-play by quarter — several stack into one import."
+            }
+          />
+
+          {rows.length > 0 && (
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto border-t pt-3">
+              {rows.map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={r.quarter}
+                    onChange={(e) => update(r.id, { quarter: Number(e.target.value) })}
+                    className={cn(selectClass, "h-8 w-16")}
+                    aria-label="Quarter"
+                  >
+                    {QUARTER_OPTS.map((q) => (
+                      <option key={q.value} value={q.value}>{q.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={r.team}
+                    onChange={(e) => update(r.id, { team: e.target.value as "team" | "opp" })}
+                    className={cn(selectClass, "h-8 w-20")}
+                    aria-label="Possession"
+                  >
+                    <option value="team">Us</option>
+                    <option value="opp">Them</option>
+                  </select>
+                  <Input
+                    value={r.clock}
+                    onChange={(e) => update(r.id, { clock: e.target.value })}
+                    placeholder="mm:ss"
+                    className="h-8 w-20"
+                    aria-label="Clock"
+                  />
+                  <Input
+                    value={r.description}
+                    onChange={(e) => update(r.id, { description: e.target.value })}
+                    placeholder="Play"
+                    className="h-8 min-w-[12rem] flex-1"
+                    aria-label="Play description"
+                  />
+                  <Button type="button" variant="ghost" size="sm" onClick={() => remove(r.id)} aria-label="Remove play">
+                    ×
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {shots > 0 && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No plays were read from that image. Try a clearer screenshot.
+            </p>
+          )}
+
+          {rows.length > 0 && (
+            <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={genSummary}
+                  onChange={(e) => setGenSummary(e.target.checked)}
+                  className="size-4"
+                />
+                <span className="font-medium">Generate a game summary from this play-by-play</span>
+              </label>
+              {genSummary && (
+                <label className="flex items-center gap-2 pl-6 text-sm text-muted-foreground">
+                  Written by
+                  <select
+                    value={summaryPersona}
+                    onChange={(e) => setSummaryPersona(Number(e.target.value))}
+                    className={cn(selectClass, "h-8 max-w-56")}
+                  >
+                    {personas.length === 0 && <option value={0}>Default voice</option>}
+                    {personas.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+        </DialogBody>
+
+        <DialogFooter>
+          {rows.length > 0 && (
+            <Button type="button" variant="ghost" onClick={reset}>
+              Clear
+            </Button>
+          )}
+          <Button type="button" onClick={doImport} disabled={rows.length === 0 || pending}>
+            {pending ? "Saving…" : `Save ${rows.length} play${rows.length === 1 ? "" : "s"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------ Opponent player stat lines ------------------------------ */
+
+type OppPlayerRow = {
+  id: number;
+  key: string;
+  playerName: string;
+  position: string | null;
+  stats: Record<string, number>;
+  include: boolean;
+};
+
+function OppPlayerStatsOcrDialog({
+  seasonId,
+  gameId,
+  open,
+  onOpenChange,
+}: {
+  seasonId: number;
+  gameId: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const [rows, setRows] = useState<OppPlayerRow[]>([]);
+  const [shots, setShots] = useState(0);
+  const [nextId, setNextId] = useState(0);
+  const [pending, startTransition] = useTransition();
+
+  function mergeResult(result: OcrResult) {
+    if (result.kind !== "playerStats") return;
+    setShots((s) => s + 1);
+    setRows((prev) => {
+      const byKey = new Map(prev.map((r) => [r.key, r]));
+      let id = nextId;
+      for (const line of result.lines) {
+        const key = nameKey(line.playerName);
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.stats = { ...existing.stats, ...line.stats };
+          if (line.playerName.length > existing.playerName.length) existing.playerName = line.playerName;
+          if (!existing.position && line.position) existing.position = line.position;
+        } else {
+          byKey.set(key, {
+            id: id++,
+            key,
+            playerName: line.playerName,
+            position: line.position,
+            stats: { ...line.stats },
+            include: hasAnyStat(line.stats),
+          });
+        }
+      }
+      setNextId(id);
+      return Array.from(byKey.values());
+    });
+  }
+
+  function reset() {
+    setRows([]);
+    setShots(0);
+  }
+  const update = (id: number, patch: Partial<OppPlayerRow>) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const selected = rows.filter((r) => r.include);
+  const canImport = selected.length > 0 && selected.every((r) => r.playerName.trim());
+
+  function doImport() {
+    const payload: OcrOppPlayerInput[] = selected.map((r) => ({
+      playerName: r.playerName.trim(),
+      position: r.position?.trim() || null,
+      stats: r.stats,
+    }));
+    startTransition(async () => {
+      const id = toast.loading("Importing opponent lines…");
+      try {
+        await commitOcrOppPlayerStats(seasonId, gameId, payload);
+        toast.success(`Imported ${payload.length} opponent line${payload.length === 1 ? "" : "s"}`, { id });
+        reset();
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Import failed", { id });
+      }
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Import opponent player stats</DialogTitle>
+          <DialogDescription>
+            One screenshot per category (passing, rushing, …) — they stack and merge
+            per player. These are recorded as named lines on this game (not roster
+            players). Saving replaces the game&rsquo;s current opponent lines.
+          </DialogDescription>
+        </DialogHeader>
+
+        <DialogBody className="space-y-3">
+          <OcrFilePicker
+            kind="playerStats"
+            onResult={mergeResult}
+            label={shots === 0 ? "Read screenshot(s)" : "Add more categories"}
+            hint={
+              shots > 0
+                ? `${shots} screenshot${shots === 1 ? "" : "s"} read · ${rows.length} player${rows.length === 1 ? "" : "s"}`
+                : undefined
+            }
+          />
+
+          {rows.length > 0 && (
+            <div className="max-h-[50vh] space-y-2 overflow-y-auto border-t pt-3">
+              {rows.map((r) => (
+                <div key={r.id} className="flex items-start gap-2 rounded-md border p-2">
+                  <input
+                    type="checkbox"
+                    checked={r.include}
+                    onChange={(e) => update(r.id, { include: e.target.checked })}
+                    aria-label={`Import ${r.playerName}`}
+                    className="mt-1 size-4"
+                  />
+                  <div className="flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        value={r.playerName}
+                        onChange={(e) => update(r.id, { playerName: e.target.value })}
+                        placeholder="Player name"
+                        className="h-8 min-w-[10rem] flex-1"
+                        aria-label="Opponent player name"
+                      />
+                      <Input
+                        value={r.position ?? ""}
+                        onChange={(e) => update(r.id, { position: e.target.value })}
+                        placeholder="Pos"
+                        maxLength={8}
+                        className="h-8 w-16"
+                        aria-label="Position"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">{summarize(r.stats)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {shots > 0 && rows.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No stat lines were read from that image. Try a clearer screenshot.
+            </p>
+          )}
+        </DialogBody>
+
+        <DialogFooter>
+          {rows.length > 0 && (
+            <Button type="button" variant="ghost" onClick={reset}>
+              Clear
+            </Button>
+          )}
+          <Button type="button" onClick={doImport} disabled={!canImport || pending}>
+            {pending ? "Importing…" : `Import ${selected.length} line${selected.length === 1 ? "" : "s"}`}
           </Button>
         </DialogFooter>
       </DialogContent>

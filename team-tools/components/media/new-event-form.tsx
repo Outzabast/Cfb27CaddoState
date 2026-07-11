@@ -14,6 +14,7 @@ import { MEDIA_ANGLES, angleBySlug } from "@/lib/media/angles";
 export type GameOption = { id: number; label: string; played: boolean };
 export type SeasonOption = { id: number; name: string };
 export type RecruitOption = { id: number; label: string };
+export type StaffOption = { id: number; label: string };
 
 const selectClass =
   "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
@@ -27,12 +28,14 @@ export function NewEventForm({
   seasons,
   players,
   recruits,
+  staff,
   personas,
 }: {
   games: GameOption[];
   seasons: SeasonOption[];
   players: PlayerOption[];
   recruits: RecruitOption[];
+  staff: StaffOption[];
   personas: PersonaOption[];
 }) {
   const [angle, setAngle] = useState(MEDIA_ANGLES[0].slug);
@@ -107,6 +110,23 @@ export function NewEventForm({
           ) : (
             <p className="text-xs text-muted-foreground">
               No recruits yet — add one on the Recruits page first.
+            </p>
+          )}
+        </div>
+      ) : meta.subject === "staff" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="subjectId">Staff member</Label>
+          {staff.length ? (
+            <select id="subjectId" name="subjectId" className={selectClass}>
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No staff yet — assign coaches from a season&rsquo;s home page first.
             </p>
           )}
         </div>

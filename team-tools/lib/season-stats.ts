@@ -70,6 +70,7 @@ export type StatSection = { title: string; rows: StatRow[] };
 export type TeamSeasonTotals = {
   firstDowns: number;
   totalPlays: number;
+  totalOffense: number;
   totalYards: number;
   passYds: number;
   rushYds: number;
@@ -180,10 +181,12 @@ export function seasonTeamSections(
     {
       title: "Offense",
       rows: [
-        { label: "Total Yards", value: team.totalYards },
+        { label: "Total Offense", value: team.totalOffense },
         { label: "Total Plays", value: team.totalPlays },
-        { label: "Yards / Play", value: avg1(team.totalYards, team.totalPlays) },
-        { label: "Yards / Game", value: perGame(team.totalYards, g) },
+        { label: "Yards / Play", value: avg1(team.totalOffense, team.totalPlays) },
+        { label: "Total Offense / Game", value: perGame(team.totalOffense, g) },
+        { label: "Total Yards (all-purpose)", value: team.totalYards },
+        { label: "All-Purpose / Game", value: perGame(team.totalYards, g) },
       ],
     },
     {
@@ -203,7 +206,8 @@ export function seasonTeamSections(
             rows: [
               { label: "Points Allowed", value: meta.pointsAgainst },
               { label: "Points Allowed / Game", value: perGame(meta.pointsAgainst, g) },
-              { label: "Total Yards Allowed", value: opp.totalYards },
+              { label: "Total Offense Allowed", value: opp.totalOffense },
+              { label: "Total Yards Allowed (all-purpose)", value: opp.totalYards },
               { label: "Yards Allowed / Game", value: perGame(opp.totalYards, g) },
               { label: "Passing Yards Allowed", value: opp.passYds },
               { label: "Passing Allowed / Game", value: perGame(opp.passYds, g) },

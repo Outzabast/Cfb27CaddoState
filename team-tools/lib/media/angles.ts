@@ -13,7 +13,7 @@ export type MediaAngle = {
   blurb: string;
   /** Whether the subject picker chooses a played game, an upcoming game, a season,
    *  player(s), or a recruit. */
-  subject: "gamePlayed" | "gameUpcoming" | "season" | "players" | "recruit";
+  subject: "gamePlayed" | "gameUpcoming" | "season" | "players" | "recruit" | "staff";
 };
 
 export const MEDIA_ANGLES: MediaAngle[] = [
@@ -66,6 +66,13 @@ export const MEDIA_ANGLES: MediaAngle[] = [
     blurb: "A player entering the transfer portal / leaving the program.",
     subject: "players",
   },
+  {
+    slug: "staff-feature",
+    label: "Staff feature",
+    scope: "STAFF",
+    blurb: "A coach profile — tenure, record, philosophy, and where the program's headed.",
+    subject: "staff",
+  },
 ];
 
 const BY_SLUG = new Map(MEDIA_ANGLES.map((a) => [a.slug, a]));
@@ -82,5 +89,7 @@ export function defaultAngleForScope(scope: MediaScope): string {
       ? "feature"
       : scope === "RECRUIT"
         ? "recruiting"
-        : "season";
+        : scope === "STAFF"
+          ? "staff-feature"
+          : "season";
 }

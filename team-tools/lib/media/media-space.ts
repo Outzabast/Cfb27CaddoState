@@ -20,6 +20,7 @@ export type PostEventInput = {
   gameId?: number | null;
   seasonId?: number | null;
   recruitId?: number | null;
+  staffId?: number | null;
   context?: string | null;
   /** Author personas to write as — one piece each. Empty = one default-voice piece. */
   personaIds?: number[];
@@ -45,6 +46,7 @@ export async function postMediaEvent(input: PostEventInput): Promise<number> {
       gameId: input.scope === "GAME" ? input.gameId ?? null : null,
       seasonId: input.scope === "TEAM" ? input.seasonId ?? null : null,
       recruitId: input.scope === "RECRUIT" ? input.recruitId ?? null : null,
+      staffId: input.scope === "STAFF" ? input.staffId ?? null : null,
       context: input.context?.trim() || null,
       personaIds: input.personaIds ?? [],
       playerIds: input.playerIds ?? [],
@@ -63,6 +65,7 @@ type Target = {
   gameId: number | null;
   seasonId: number | null;
   recruitId: number | null;
+  staffId: number | null;
 };
 
 /**
@@ -84,7 +87,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
     // onto the piece); a RECRUIT event is likewise a single subject. For GAME/TEAM,
     // playerIds are separate PLAYER features to fan out.
     const isPlayerScope = event.scope === "PLAYER";
-    const isSingleSubject = isPlayerScope || event.scope === "RECRUIT";
+    const isSingleSubject = isPlayerScope || event.scope === "RECRUIT" || event.scope === "STAFF";
     const targets: Target[] = isSingleSubject
       ? [
           {
@@ -93,6 +96,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
             gameId: null,
             seasonId: null,
             recruitId: event.recruitId,
+            staffId: event.staffId,
           },
         ]
       : [
@@ -102,6 +106,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
             gameId: event.gameId,
             seasonId: event.seasonId,
             recruitId: null,
+            staffId: null,
           },
           ...event.playerIds.map((pid) => ({
             scope: "PLAYER" as MediaScope,
@@ -109,6 +114,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
             gameId: null,
             seasonId: null,
             recruitId: null,
+            staffId: null,
           })),
         ];
     // One piece per persona (empty personas = a single default-voice piece).
@@ -139,6 +145,7 @@ export async function processMediaEvent(eventId: number): Promise<void> {
             gameId: target.gameId,
             seasonId: target.seasonId,
             recruitId: target.recruitId,
+            staffId: target.staffId,
             promptContext: event.context,
             authorPersonaId: personaId,
             mediaEventId: eventId,

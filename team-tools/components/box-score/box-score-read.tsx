@@ -5,6 +5,7 @@ import {
   type BoxLine,
   type TeamTotals,
 } from "@/lib/box-score";
+import { redZoneByTeam, downEfficiencyByTeam, type PlayLite } from "@/lib/play-by-play";
 import {
   Table,
   TableBody,
@@ -35,58 +36,6 @@ function SectionHeader({ title }: { title: string }) {
       <h3 className="eyebrow !text-foreground">
         {TEAM} {title}
       </h3>
-    </div>
-  );
-}
-
-function Linescore({ game }: { game: Game }) {
-  const hasOt = game.teamOt > 0 || game.oppOt > 0;
-  const cols: { label: string; team: number; opp: number }[] = [
-    { label: "1", team: game.teamQ1, opp: game.oppQ1 },
-    { label: "2", team: game.teamQ2, opp: game.oppQ2 },
-    { label: "3", team: game.teamQ3, opp: game.oppQ3 },
-    { label: "4", team: game.teamQ4, opp: game.oppQ4 },
-    ...(hasOt ? [{ label: "OT", team: game.teamOt, opp: game.oppOt }] : []),
-  ];
-  const rows = [
-    { name: TEAM, cells: cols.map((c) => c.team), final: game.teamPoints, win: game.teamPoints > game.oppPoints },
-    { name: game.opponent, cells: cols.map((c) => c.opp), final: game.oppPoints, win: game.oppPoints > game.teamPoints },
-  ];
-
-  return (
-    <div className="w-fit overflow-x-auto rounded-md border">
-      <table className="border-collapse">
-        <thead>
-          <tr className="eyebrow border-b">
-            <th className="px-3 py-2 text-left font-bold"></th>
-            {cols.map((c) => (
-              <th key={c.label} className="w-12 px-2 py-2 text-center font-bold">
-                {c.label}
-              </th>
-            ))}
-            <th className="border-l px-3 py-2 text-center font-bold">T</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.name} className="border-t">
-              <td className="px-3 py-2 font-semibold whitespace-nowrap">{r.name}</td>
-              {r.cells.map((v, i) => (
-                <td key={i} className="px-2 py-2 text-center tabular-nums text-muted-foreground">
-                  {v}
-                </td>
-              ))}
-              <td
-                className={`border-l px-3 py-2 text-center text-lg font-bold tabular-nums ${
-                  r.win ? "text-foreground" : "text-muted-foreground"
-                }`}
-              >
-                {r.final}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -150,46 +99,63 @@ function CategoryTable({
   );
 }
 
-export function BoxScoreRead({
-  game,
-  lines,
-  teamStats,
-  oppStats,
-}: {
-  game: Game;
-  lines: BoxLine[];
-  teamStats: TeamTotals | null;
-  oppStats: TeamTotals | null;
-}) {
+/** The player box-score category tables (Passing … Punting) for one team's lines.
+ *  Empty-state message when nothing's recorded. */
+export function PlayerBoxTables({ lines }: { lines: BoxLine[] }) {
   const categories = BOX_CATEGORIES.map((cat) => ({
     cat,
     rows: lines.filter((l) => cat.eligible(l)),
   })).filter((c) => c.rows.length > 0);
 
-  const teamRows = teamStats ? teamCompareRows(teamStats, oppStats, lines) : [];
+  if (categories.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No player stats recorded yet. Use <span className="font-medium">Edit box score</span> to add them.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {categories.map(({ cat, rows }) => (
+        <CategoryTable key={cat.key} title={cat.title} cols={cat.cols} rows={rows} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Team-stat comparison — us vs the opponent. Countable stats are derived live from
+ * each team's player lines, red zone from the play-by-play; only the situational
+ * stats come from the stored team-stat record, so nothing has to be imported twice.
+ */
+export function TeamStatsPanel({
+  game,
+  teamLines,
+  oppLines,
+  teamStats,
+  oppStats,
+  plays,
+}: {
+  game: Game;
+  teamLines: BoxLine[];
+  oppLines: BoxLine[];
+  teamStats: TeamTotals | null;
+  oppStats: TeamTotals | null;
+  plays: PlayLite[];
+}) {
+  const rz = redZoneByTeam(plays);
+  const down = downEfficiencyByTeam(plays);
+  const teamRows = teamCompareRows(teamStats, oppStats, teamLines, oppLines, rz, down);
+  const hasAnything =
+    teamLines.length > 0 || oppLines.length > 0 || !!teamStats || !!oppStats || plays.length > 0;
 
   return (
     <div className="space-y-6">
-      <Linescore game={game} />
-
-      {categories.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No player stats recorded yet. Use <span className="font-medium">Edit box score</span> to add them.
-        </p>
-      ) : (
-        <div className="space-y-4">
-          {categories.map(({ cat, rows }) => (
-            <CategoryTable key={cat.key} title={cat.title} cols={cat.cols} rows={rows} />
-          ))}
-        </div>
-      )}
-
-      {/* Team stats — us vs opponent */}
       <div className="overflow-hidden rounded-md border bg-card">
         <div className="px-4 py-2.5">
           <h3 className="eyebrow !text-foreground">Team Stats</h3>
         </div>
-        {teamStats ? (
+        {hasAnything ? (
           <table className="w-full text-sm">
             <thead>
               <tr className="eyebrow border-t">

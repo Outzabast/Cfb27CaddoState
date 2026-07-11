@@ -9,6 +9,8 @@ import { CLASS_LABELS, CLASS_ORDER } from "@/lib/classes";
 import type { PlayerClass } from "@/generated/prisma/enums";
 import type { OcrResult } from "@/lib/ocr/kinds";
 import { matchNameIndex, nameKey } from "@/lib/ocr/name-match";
+import { formatHeight } from "@/lib/player-profile";
+import { formatHometown } from "@/lib/recruits";
 import { commitOcrRoster, bulkAddToRoster } from "@/app/seasons/[id]/roster/actions";
 import { OcrFilePicker } from "./ocr-file-picker";
 import { SaveForm } from "@/components/save-form";
@@ -87,9 +89,22 @@ type EditRow = {
   number: string;
   position: string;
   class: PlayerClass | "";
+  height: string;
+  weight: string;
+  hometown: string;
   onRoster: boolean;
   include: boolean;
 };
+
+/** "5'11\"", "5-11", or a plain inch count → inches (null when blank/invalid). */
+function parseHeightInches(raw: string): number | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const m = s.match(/(\d+)\s*['\-\s]\s*(\d+)/);
+  if (m) return Number(m[1]) * 12 + Number(m[2]);
+  const n = Number(s);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 
 function RosterOcrDialog({
   seasonId,
@@ -113,27 +128,43 @@ function RosterOcrDialog({
     if (result.kind !== "roster") return;
     setShots((s) => s + 1);
     setRows((prev) => {
-      const seen = new Set(prev.map((r) => r.key));
+      const byKey = new Map(prev.map((r) => [r.key, r]));
       let id = nextId;
-      const additions: EditRow[] = [];
       for (const r of result.rows) {
         const key = nameKey(r.name);
-        if (seen.has(key)) continue; // same player already staged from another shot
-        seen.add(key);
-        const onRoster = matchNameIndex(r.name, existingNamed) >= 0;
-        additions.push({
-          id: id++,
-          key,
-          name: r.name,
-          number: r.number == null ? "" : String(r.number),
-          position: r.position,
-          class: r.class ?? "",
-          onRoster,
-          include: !onRoster,
-        });
+        const height = formatHeight(r.heightInches) ?? "";
+        const weight = r.weightLbs == null ? "" : String(r.weightLbs);
+        const hometown = formatHometown(r.hometownCity, r.hometownState) ?? "";
+        const existing = byKey.get(key);
+        if (existing) {
+          // Same player from another shot — fill any blanks (e.g. HT/WT/hometown
+          // read from the detail panel in a later screenshot).
+          if (r.name.length > existing.name.length) existing.name = r.name;
+          if (!existing.number && r.number != null) existing.number = String(r.number);
+          if (!existing.position && r.position) existing.position = r.position;
+          if (!existing.class && r.class) existing.class = r.class;
+          if (!existing.height && height) existing.height = height;
+          if (!existing.weight && weight) existing.weight = weight;
+          if (!existing.hometown && hometown) existing.hometown = hometown;
+        } else {
+          const onRoster = matchNameIndex(r.name, existingNamed) >= 0;
+          byKey.set(key, {
+            id: id++,
+            key,
+            name: r.name,
+            number: r.number == null ? "" : String(r.number),
+            position: r.position,
+            class: r.class ?? "",
+            height,
+            weight,
+            hometown,
+            onRoster,
+            include: !onRoster,
+          });
+        }
       }
       setNextId(id);
-      return [...prev, ...additions];
+      return Array.from(byKey.values());
     });
   }
 
@@ -155,6 +186,9 @@ function RosterOcrDialog({
       position: r.position.trim(),
       class: r.class as string,
       number: r.number.trim() === "" ? null : Number(r.number),
+      heightInches: parseHeightInches(r.height),
+      weightLbs: r.weight.trim() === "" ? null : Number(r.weight),
+      hometown: r.hometown.trim() || null,
     }));
     startTransition(async () => {
       const id = toast.loading("Importing players…");
@@ -201,78 +235,97 @@ function RosterOcrDialog({
           />
 
           {rows.length > 0 && (
-            <div className="space-y-1 border-t pt-3">
-              <div className="grid grid-cols-[2rem_1fr_4rem_5rem_11rem_2rem] gap-2 px-1 text-xs font-medium text-muted-foreground">
-                <span />
-                <span>Name</span>
-                <span>#</span>
-                <span>Pos</span>
-                <span>Class</span>
-                <span />
-              </div>
+            <div className="space-y-2 border-t pt-3">
               {rows.map((r) => {
                 const nameInvalid = r.include && !r.name.trim();
                 const posInvalid =
                   r.include && (!r.position.trim() || r.position.trim().length > 8);
                 const classInvalid = r.include && !r.class;
                 return (
-                  <div
-                    key={r.id}
-                    className="grid grid-cols-[2rem_1fr_4rem_5rem_11rem_2rem] items-center gap-2"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={r.include}
-                      onChange={(e) => update(r.id, { include: e.target.checked })}
-                      aria-label={`Import ${r.name}`}
-                      className="size-4"
-                    />
-                    <div className="flex items-center gap-2">
+                  <div key={r.id} className="rounded-md border p-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={r.include}
+                        onChange={(e) => update(r.id, { include: e.target.checked })}
+                        aria-label={`Import ${r.name}`}
+                        className="size-4"
+                      />
                       <Input
                         value={r.name}
                         onChange={(e) => update(r.id, { name: e.target.value })}
                         aria-invalid={nameInvalid}
-                        className="h-9"
+                        placeholder="Full name"
+                        className="h-9 min-w-[9rem] flex-1"
                       />
                       {r.onRoster && (
                         <span className="shrink-0 text-xs text-muted-foreground">on roster</span>
                       )}
+                      <Input
+                        value={r.number}
+                        onChange={(e) => update(r.id, { number: e.target.value })}
+                        type="number"
+                        placeholder="#"
+                        className="h-9 w-14"
+                        aria-label="Number"
+                      />
+                      <Input
+                        value={r.position}
+                        onChange={(e) => update(r.id, { position: e.target.value })}
+                        maxLength={8}
+                        aria-invalid={posInvalid}
+                        placeholder="Pos"
+                        className="h-9 w-16"
+                        aria-label="Position"
+                      />
+                      <select
+                        value={r.class}
+                        onChange={(e) => update(r.id, { class: e.target.value as PlayerClass | "" })}
+                        aria-invalid={classInvalid}
+                        className={cn(selectClass, "w-40", classInvalid && invalidRing)}
+                        aria-label="Class"
+                      >
+                        <option value="">Pick class…</option>
+                        {classOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Remove ${r.name}`}
+                        onClick={() => removeRow(r.id)}
+                      >
+                        ✕
+                      </Button>
                     </div>
-                    <Input
-                      value={r.number}
-                      onChange={(e) => update(r.id, { number: e.target.value })}
-                      type="number"
-                      className="h-9"
-                    />
-                    <Input
-                      value={r.position}
-                      onChange={(e) => update(r.id, { position: e.target.value })}
-                      maxLength={8}
-                      aria-invalid={posInvalid}
-                      className="h-9"
-                    />
-                    <select
-                      value={r.class}
-                      onChange={(e) => update(r.id, { class: e.target.value as PlayerClass | "" })}
-                      aria-invalid={classInvalid}
-                      className={cn(selectClass, classInvalid && invalidRing)}
-                    >
-                      <option value="">Pick class…</option>
-                      {classOptions.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Remove ${r.name}`}
-                      onClick={() => removeRow(r.id)}
-                    >
-                      ✕
-                    </Button>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 pl-6">
+                      <Input
+                        value={r.height}
+                        onChange={(e) => update(r.id, { height: e.target.value })}
+                        placeholder={`Height (6'2")`}
+                        className="h-8 w-28"
+                        aria-label="Height"
+                      />
+                      <Input
+                        value={r.weight}
+                        onChange={(e) => update(r.id, { weight: e.target.value })}
+                        type="number"
+                        placeholder="Weight (lbs)"
+                        className="h-8 w-28"
+                        aria-label="Weight"
+                      />
+                      <Input
+                        value={r.hometown}
+                        onChange={(e) => update(r.id, { hometown: e.target.value })}
+                        placeholder="Hometown (City, ST)"
+                        className="h-8 min-w-[10rem] flex-1"
+                        aria-label="Hometown"
+                      />
+                    </div>
                   </div>
                 );
               })}

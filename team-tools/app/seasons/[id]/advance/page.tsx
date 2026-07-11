@@ -5,7 +5,10 @@ import { SaveForm } from "@/components/save-form";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { advanceClass, INACTIVE_CLASSES, CLASS_LABELS, CLASS_ORDER } from "@/lib/classes";
-import { RECRUIT_KIND_LABELS, starString } from "@/lib/recruits";
+import { RECRUIT_KIND_LABELS } from "@/lib/recruits";
+import { STAFF_ROLE_LABELS, STAFF_ROLES } from "@/lib/staff";
+import { DepartureList } from "@/components/departure-list";
+import { RecruitImportButton } from "@/components/ocr/recruit-import";
 import { commitAdvance } from "../../actions";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +35,7 @@ export default async function AdvanceSeasonPage({
           },
         },
       },
+      staff: { select: { staffId: true, staffName: true, role: true } },
     },
   });
   if (!season) notFound();
@@ -53,6 +57,10 @@ export default async function AdvanceSeasonPage({
     orderBy: [{ kind: "asc" }, { stars: "desc" }, { name: "asc" }],
     select: { id: true, name: true, position: true, kind: true, previousSchool: true, stars: true },
   });
+
+  const staff = [...season.staff].sort(
+    (a, b) => STAFF_ROLES.indexOf(a.role) - STAFF_ROLES.indexOf(b.role),
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -94,19 +102,15 @@ export default async function AdvanceSeasonPage({
             {returning.length === 0 ? (
               <p className="text-sm text-muted-foreground italic">No returning-eligible players.</p>
             ) : (
-              <ul className="divide-y rounded-md border">
-                {returning.map((sp) => (
-                  <li key={sp.playerId} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                    <input type="checkbox" name="departingPlayerId" value={sp.playerId} id={`dep-${sp.playerId}`} />
-                    <label htmlFor={`dep-${sp.playerId}`} className="flex-1">
-                      <span className="font-medium">{sp.playerName}</span>{" "}
-                      <span className="text-muted-foreground">
-                        {sp.position} · {CLASS_LABELS[sp.class]} → {CLASS_LABELS[sp.nextClass]}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+              <DepartureList
+                players={returning.map((sp) => ({
+                  playerId: sp.playerId,
+                  name: sp.playerName,
+                  position: sp.position,
+                  fromClass: CLASS_LABELS[sp.class],
+                  toClass: CLASS_LABELS[sp.nextClass],
+                }))}
+              />
             )}
             {graduating.length > 0 && (
               <p className="text-xs text-muted-foreground">
@@ -115,17 +119,56 @@ export default async function AdvanceSeasonPage({
             )}
           </section>
 
+          {/* Staff */}
+          {staff.length > 0 && (
+            <section className="space-y-3">
+              <div>
+                <h2 className="eyebrow !text-foreground">Staff</h2>
+                <p className="text-xs text-muted-foreground">
+                  Coaches carry to {nextName} in the same role. Check anyone who&rsquo;s
+                  leaving; you can reassign roles on the new season&rsquo;s home page.
+                </p>
+              </div>
+              <ul className="divide-y rounded-md border">
+                {staff.map((s) => (
+                  <li key={s.staffId} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                    <input type="checkbox" name="departingStaffId" value={s.staffId} id={`staff-${s.staffId}`} />
+                    <label htmlFor={`staff-${s.staffId}`} className="flex-1">
+                      <span className="font-medium">{s.staffName}</span>{" "}
+                      <span className="text-muted-foreground">{STAFF_ROLE_LABELS[s.role]}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* Incoming signees */}
           <section className="space-y-3">
-            <div>
-              <h2 className="eyebrow !text-foreground">Incoming class</h2>
-              <p className="text-xs text-muted-foreground">
-                Signed prospects from {season.name}. Check to enroll them onto the {nextName} roster.
-              </p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="eyebrow !text-foreground">Incoming class</h2>
+                <p className="text-xs text-muted-foreground">
+                  Signed prospects from {season.name}. Check to enroll them onto the {nextName} roster.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <RecruitImportButton
+                  seasons={[{ id: fromSeasonId, name: season.name }]}
+                  defaultSeasonId={fromSeasonId}
+                />
+                <Link
+                  href="/recruits/new"
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  Add recruit
+                </Link>
+              </div>
             </div>
             {signees.length === 0 ? (
               <p className="text-sm text-muted-foreground italic">
-                No signed prospects waiting to enroll. Sign recruits on the{" "}
+                No signed prospects waiting to enroll. Add or import signees above (mark
+                them Signed), or sign recruits on the{" "}
                 <Link href="/recruits" className="underline">
                   recruiting board
                 </Link>
