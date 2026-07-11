@@ -34,12 +34,15 @@ const SYSTEM_PREFACE =
   TEAM_FACTS + " " +
   "You are a writer for a college-football program's internal media hub. You have " +
   "research tools — use them to build your own picture of whoever and whatever the " +
-  "story touches (player dossiers, a player's other games, the roster, the coaching " +
-  "staff, prior articles by you or about this subject, real quotes from published " +
-  "press conferences via list_press_conferences / get_press_conference, and extra " +
-  "standing background facts via list_facts) so each piece is specific and fresh, not " +
-  "a template. Write ONLY from real data the tools and prompt provide — never invent " +
-  "scores, names, or stats, and never contradict the box score. Use the editor's " +
+  "story touches (player dossiers, a player's other games, past seasons via " +
+  "list_seasons / list_games / get_season / get_season_stats / get_player_season_stats, " +
+  "breakout performances via list_player_games or list_games with sortBy \"notoriety\", " +
+  "the roster, the coaching staff, prior articles by you or about this subject, real " +
+  "quotes from published press conferences via list_press_conferences / get_press_conference, " +
+  "and extra standing background facts via list_facts) so each piece is specific and " +
+  "fresh, not a template. Past seasons are fully researchable — never assume only the " +
+  "current year exists. Write ONLY from real data the tools and prompt provide — never " +
+  "invent scores, names, or stats, and never contradict the box score. Use the editor's " +
   "extra context for color. When done researching, reply with ONLY a JSON object: " +
   '{"headline": string, "body": string}. The body is the full article in Markdown — ' +
   "paragraphs separated by blank lines, with light formatting (a bold key phrase, an " +
@@ -84,8 +87,8 @@ async function buildSeed(
   const angle = media.angle ?? defaultAngleForScope(media.scope);
   const out: string[] = [];
   // The season whose SEASON/ROSTER standing facts apply. Resolved per scope
-  // below (game's season, the article's season, or — for a player piece with no
-  // season anchor — the current one).
+  // below (game's season, the article's season, focus-game season, staff tenure,
+  // or — only when nothing else anchors it — the current season).
   let factsSeasonId: number | null = null;
   out.push(
     kind === "social"
@@ -118,8 +121,6 @@ async function buildSeed(
       );
     }
   } else if (media.scope === "PLAYER" && media.playerId != null) {
-    // A player piece has no season anchor — attach the current season's facts.
-    factsSeasonId = await getCurrentSeasonId();
     if (subjectPlayerIds.length > 1) {
       const names = await db.player.findMany({
         where: { id: { in: subjectPlayerIds } },
@@ -136,14 +137,35 @@ async function buildSeed(
     if (focusGameIds.length) {
       const games = await db.game.findMany({
         where: { id: { in: focusGameIds } },
-        select: { id: true, opponent: true, week: true },
+        select: { id: true, opponent: true, week: true, seasonId: true, season: { select: { name: true } } },
       });
+      // Anchor standing facts to the focus games' season (most common if mixed).
+      const seasonCounts = new Map<number, number>();
+      for (const g of games) seasonCounts.set(g.seasonId, (seasonCounts.get(g.seasonId) ?? 0) + 1);
+      let bestSeason: number | null = null;
+      let bestCount = 0;
+      for (const [sid, n] of seasonCounts) {
+        if (n > bestCount) {
+          bestSeason = sid;
+          bestCount = n;
+        }
+      }
+      factsSeasonId = bestSeason;
       out.push(
         "- Focus games (center the piece on the subject's performance in these): " +
           games
-            .map((g) => `vs ${g.opponent}${g.week != null ? ` Wk ${g.week}` : ""} (gameId ${g.id})`)
+            .map(
+              (g) =>
+                `${g.season.name} vs ${g.opponent}${g.week != null ? ` Wk ${g.week}` : ""} ` +
+                `(gameId ${g.id}, seasonId ${g.seasonId})`,
+            )
             .join(", "),
       );
+    } else if (media.seasonId != null) {
+      factsSeasonId = media.seasonId;
+      out.push(`- Season context: seasonId ${media.seasonId}`);
+    } else {
+      factsSeasonId = await getCurrentSeasonId();
     }
   } else if (media.scope === "TEAM" && media.seasonId != null) {
     factsSeasonId = media.seasonId;
@@ -156,8 +178,17 @@ async function buildSeed(
     factsSeasonId = recruit?.seasonId ?? null;
     out.push(`- This recruit: recruitId ${media.recruitId}` + (recruit ? `, class seasonId ${recruit.seasonId}` : ""));
   } else if (media.scope === "STAFF" && media.staffId != null) {
-    factsSeasonId = await getCurrentSeasonId();
-    out.push(`- This coach: staffId ${media.staffId}`);
+    // Prefer the coach's most recent tenure season over a blind "current" default.
+    const latestTenure = await db.seasonStaff.findFirst({
+      where: { staffId: media.staffId },
+      orderBy: { season: { startYear: "desc" } },
+      select: { seasonId: true },
+    });
+    factsSeasonId = latestTenure?.seasonId ?? (await getCurrentSeasonId());
+    out.push(
+      `- This coach: staffId ${media.staffId}` +
+        (factsSeasonId != null ? `, most recent tenure seasonId ${factsSeasonId}` : ""),
+    );
   }
   if (media.authorPersonaId != null) {
     out.push(`- Your byline persona id: ${media.authorPersonaId} (list_articles to see your past pieces)`);

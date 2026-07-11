@@ -7,9 +7,13 @@ import { CLASS_LABELS } from "@/lib/classes";
 import { formatHeight, PLAYER_STATUS_LABELS } from "@/lib/player-profile";
 import {
   PLAYER_STAT_GROUPS,
+  TEAM_STAT_GROUPS,
   aggregateSelect,
   mergeAggregate,
 } from "@/lib/stat-fields";
+import { computeRecord, formatRecord } from "@/lib/season-record";
+import { teamLeaders } from "@/lib/season-stats";
+import type { BoxLine } from "@/lib/box-score";
 import {
   compactStatSummary,
   describeGame,
@@ -40,7 +44,9 @@ export const MEDIA_TOOLS: ToolSchema[] = [
     function: {
       name: "get_player",
       description:
-        "Full dossier on one player: bio, awards, notable events, status/injury, notoriety, current position/class/number/starter, and career stat totals.",
+        "Full dossier on one player: bio, awards, notable events, status/injury, program notoriety, " +
+        "latest position/class/number/starter, career stat totals, and a per-season roster history " +
+        "(seasonId + seasonNotoriety). For a specific year's totals use get_player_season_stats.",
       parameters: {
         type: "object",
         properties: { playerId: { type: "integer" } },
@@ -65,11 +71,50 @@ export const MEDIA_TOOLS: ToolSchema[] = [
     function: {
       name: "list_player_games",
       description:
-        "A player's game log, most recent first: opponent, week, result, their stat line, and that game's notoriety.",
+        "A player's game log across seasons: opponent, week, result, their stat line, and game notoriety. " +
+        "Default sort is most recent first; pass sortBy \"notoriety\" to surface breakout performances " +
+        "(highest gameNotoriety first). Optionally filter to one seasonId.",
       parameters: {
         type: "object",
-        properties: { playerId: { type: "integer" }, limit: { type: "integer" } },
+        properties: {
+          playerId: { type: "integer" },
+          seasonId: { type: "integer" },
+          sortBy: { type: "string", enum: ["recent", "notoriety"] },
+          limit: { type: "integer" },
+        },
         required: ["playerId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_seasons",
+      description:
+        "All seasons on file (newest first): id, name, years, conference, and W-L record. " +
+        "Use to discover past seasons before calling get_season / list_games / list_roster.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_games",
+      description:
+        "Browse games across seasons. Filter by seasonId, opponent (substring), week, or played. " +
+        "sortBy \"week\" (default) is chronological within each season; sortBy \"notoriety\" ranks by " +
+        "the highest player gameNotoriety in that game — useful for finding story-worthy contests. " +
+        "Returns gameId + seasonId so you can dig in with get_game.",
+      parameters: {
+        type: "object",
+        properties: {
+          seasonId: { type: "integer" },
+          opponent: { type: "string" },
+          week: { type: "integer" },
+          played: { type: "boolean" },
+          sortBy: { type: "string", enum: ["week", "notoriety"] },
+          limit: { type: "integer" },
+        },
       },
     },
   },
@@ -108,6 +153,38 @@ export const MEDIA_TOOLS: ToolSchema[] = [
         type: "object",
         properties: { seasonId: { type: "integer" } },
         required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_season_stats",
+      description:
+        "Season team headline stats and category leaders (passing/rushing/receiving yards, tackles, INTs). " +
+        "Use for season/team stories or to compare eras — works for any seasonId.",
+      parameters: {
+        type: "object",
+        properties: { seasonId: { type: "integer" } },
+        required: ["seasonId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_player_season_stats",
+      description:
+        "One player's stats and roster slot for a specific season: position, class, number, starter, " +
+        "seasonNotoriety, and that year's aggregated box-score totals (not career). " +
+        "Use when writing about a past season rather than relying on get_player's latest/career view.",
+      parameters: {
+        type: "object",
+        properties: {
+          playerId: { type: "integer" },
+          seasonId: { type: "integer" },
+        },
+        required: ["playerId", "seasonId"],
       },
     },
   },
@@ -312,7 +389,15 @@ async function getPlayer(playerId: number) {
     awards: player.awards ?? null,
     notableEvents: player.notableEvents ?? null,
     careerStats: compactStatSummary(career),
-    seasonsPlayed: player.seasonPlayers.length,
+    seasons: player.seasonPlayers.map((sp) => ({
+      seasonId: sp.seasonRoster.seasonId,
+      season: sp.seasonRoster.season.name,
+      position: sp.position,
+      class: CLASS_LABELS[sp.class],
+      number: sp.number,
+      isStarter: sp.isStarter,
+      seasonNotoriety: sp.seasonNotoriety,
+    })),
   };
 }
 
@@ -342,33 +427,258 @@ async function findPlayers(query: string) {
 const hasStat = (v: Record<string, number>) =>
   PLAYER_STAT_GROUPS.some((g) => g.fields.some((f) => Number(v[f.name]) !== 0));
 
-async function listPlayerGames(playerId: number, limit: number) {
+function gameResultLabel(teamPoints: number, oppPoints: number) {
+  const result = teamPoints === oppPoints ? "T" : teamPoints > oppPoints ? "W" : "L";
+  return `${result} ${teamPoints}-${oppPoints}`;
+}
+
+async function listPlayerGames(
+  playerId: number,
+  limit: number,
+  opts: { seasonId?: number | null; sortBy?: string },
+) {
   const lines = await db.gamePlayerStat.findMany({
-    where: { playerId },
+    where: {
+      playerId,
+      ...(opts.seasonId != null ? { game: { seasonId: opts.seasonId } } : {}),
+    },
     include: { game: { include: { season: true } } },
   });
-  const played = lines
-    .filter((l) => hasStat(l as unknown as Record<string, number>))
-    .sort(
-      (a, b) =>
+  const played = lines.filter((l) => hasStat(l as unknown as Record<string, number>));
+  const sortBy = opts.sortBy === "notoriety" ? "notoriety" : "recent";
+  played.sort((a, b) => {
+    if (sortBy === "notoriety") {
+      return (
+        b.gameNotoriety - a.gameNotoriety ||
         b.game.season.startYear - a.game.season.startYear ||
-        (b.game.week ?? 0) - (a.game.week ?? 0),
-    )
-    .slice(0, limit);
+        (b.game.week ?? 0) - (a.game.week ?? 0)
+      );
+    }
+    return (
+      b.game.season.startYear - a.game.season.startYear ||
+      (b.game.week ?? 0) - (a.game.week ?? 0)
+    );
+  });
 
   return {
-    games: played.map((l) => {
-      const t = l.game.teamPoints, o = l.game.oppPoints;
-      const result = t === o ? "T" : t > o ? "W" : "L";
-      return {
-        season: l.game.season.name,
-        week: l.game.week,
-        opponent: `${l.game.location === "AWAY" ? "@ " : "vs "}${l.game.opponent}`,
-        result: `${result} ${t}-${o}`,
-        gameNotoriety: l.gameNotoriety,
-        line: compactStatSummary(l as unknown as Record<string, number>),
-      };
+    sortBy,
+    games: played.slice(0, limit).map((l) => ({
+      gameId: l.gameId,
+      seasonId: l.game.seasonId,
+      season: l.game.season.name,
+      week: l.game.week,
+      opponent: `${l.game.location === "AWAY" ? "@ " : "vs "}${l.game.opponent}`,
+      result: gameResultLabel(l.game.teamPoints, l.game.oppPoints),
+      gameNotoriety: l.gameNotoriety,
+      line: compactStatSummary(l as unknown as Record<string, number>),
+    })),
+  };
+}
+
+async function listSeasons() {
+  const seasons = await db.season.findMany({
+    orderBy: { startYear: "desc" },
+    include: {
+      games: { select: { teamPoints: true, oppPoints: true, isConference: true } },
+    },
+  });
+  return {
+    seasons: seasons.map((s) => ({
+      seasonId: s.id,
+      name: s.name,
+      startYear: s.startYear,
+      endYear: s.endYear,
+      conference: s.conference,
+      record: formatRecord(computeRecord(s.games)),
+    })),
+  };
+}
+
+async function listGames(args: {
+  seasonId?: unknown;
+  opponent?: unknown;
+  week?: unknown;
+  played?: unknown;
+  sortBy?: unknown;
+  limit?: unknown;
+}) {
+  const seasonId = int(args.seasonId);
+  const week = int(args.week);
+  const opponent = String(args.opponent ?? "").trim();
+  const sortBy = String(args.sortBy ?? "") === "notoriety" ? "notoriety" : "week";
+  const limit = clampLimit(args.limit, 12, 25);
+
+  const playedFilter =
+    typeof args.played === "boolean"
+      ? args.played
+        ? { OR: [{ teamPoints: { gt: 0 } }, { oppPoints: { gt: 0 } }] }
+        : { teamPoints: 0, oppPoints: 0 }
+      : undefined;
+
+  const games = await db.game.findMany({
+    where: {
+      ...(seasonId != null ? { seasonId } : {}),
+      ...(week != null ? { week } : {}),
+      ...(opponent ? { opponent: { contains: opponent, mode: "insensitive" } } : {}),
+      ...(playedFilter ?? {}),
+    },
+    include: {
+      season: { select: { id: true, name: true, startYear: true } },
+      playerStats: { select: { gameNotoriety: true }, orderBy: { gameNotoriety: "desc" }, take: 1 },
+    },
+    orderBy: [{ season: { startYear: "desc" } }, { week: "asc" }, { id: "asc" }],
+  });
+
+  const rows = games.map((g) => {
+    const played = g.teamPoints !== 0 || g.oppPoints !== 0;
+    const topNotoriety = g.playerStats[0]?.gameNotoriety ?? 0;
+    return {
+      gameId: g.id,
+      seasonId: g.season.id,
+      season: g.season.name,
+      week: g.week,
+      opponent: `${g.location === "AWAY" ? "@ " : "vs "}${g.opponent}`,
+      note: g.note ?? null,
+      played,
+      result: played ? gameResultLabel(g.teamPoints, g.oppPoints) : "unplayed",
+      topGameNotoriety: topNotoriety,
+      startYear: g.season.startYear,
+    };
+  });
+
+  if (sortBy === "notoriety") {
+    rows.sort(
+      (a, b) =>
+        b.topGameNotoriety - a.topGameNotoriety ||
+        b.startYear - a.startYear ||
+        (b.week ?? 0) - (a.week ?? 0),
+    );
+  }
+
+  return {
+    sortBy,
+    games: rows.slice(0, limit).map(({ startYear: _y, ...g }) => g),
+  };
+}
+
+async function getPlayerSeasonStats(playerId: number, seasonId: number) {
+  const sp = await db.seasonPlayer.findFirst({
+    where: { playerId, seasonRoster: { seasonId } },
+    include: {
+      seasonRoster: { include: { season: { select: { id: true, name: true } } } },
+      player: { select: { name: true, overallNotoriety: true } },
+    },
+  });
+  if (!sp) return { error: "Player was not on that season's roster." };
+
+  const a = await db.gamePlayerStat.aggregate({
+    where: { playerId, game: { seasonId } },
+    _sum: agg.sum as never,
+    _max: agg.max as never,
+  });
+  const seasonStats = mergeAggregate(a, PLAYER_STAT_GROUPS);
+
+  // Top breakout games that season by game notoriety.
+  const topGames = await db.gamePlayerStat.findMany({
+    where: { playerId, game: { seasonId }, gameNotoriety: { gt: 0 } },
+    include: { game: { select: { id: true, week: true, opponent: true, location: true, teamPoints: true, oppPoints: true } } },
+    orderBy: { gameNotoriety: "desc" },
+    take: 5,
+  });
+
+  return {
+    playerId,
+    name: sp.player.name,
+    seasonId: sp.seasonRoster.season.id,
+    season: sp.seasonRoster.season.name,
+    position: sp.position,
+    class: CLASS_LABELS[sp.class],
+    number: sp.number,
+    isStarter: sp.isStarter,
+    seasonNotoriety: sp.seasonNotoriety,
+    programNotoriety: sp.player.overallNotoriety,
+    seasonStats: compactStatSummary(seasonStats),
+    topGamesByNotoriety: topGames.map((l) => ({
+      gameId: l.game.id,
+      week: l.game.week,
+      opponent: `${l.game.location === "AWAY" ? "@ " : "vs "}${l.game.opponent}`,
+      result: gameResultLabel(l.game.teamPoints, l.game.oppPoints),
+      gameNotoriety: l.gameNotoriety,
+      line: compactStatSummary(l as unknown as Record<string, number>),
+    })),
+  };
+}
+
+async function getSeasonStats(seasonId: number) {
+  const season = await db.season.findUnique({
+    where: { id: seasonId },
+    select: { id: true, name: true },
+  });
+  if (!season) return { error: "Season not found." };
+
+  const { sum: pSum, max: pMax } = aggregateSelect(PLAYER_STAT_GROUPS);
+  const grouped = await db.gamePlayerStat.groupBy({
+    by: ["playerId"],
+    where: { game: { seasonId } },
+    _sum: pSum as never,
+    _max: pMax as never,
+  });
+  const roster = await db.seasonPlayer.findMany({
+    where: { seasonRoster: { seasonId } },
+    select: { playerId: true, playerName: true, number: true, seasonNotoriety: true },
+    orderBy: { seasonNotoriety: "desc" },
+  });
+  const nameById = new Map(roster.map((r) => [r.playerId, r.playerName]));
+  const numberById = new Map(roster.map((r) => [r.playerId, r.number]));
+
+  const lines: BoxLine[] = grouped.map((g) => {
+    const values = mergeAggregate(
+      { _sum: g._sum as Record<string, number | null>, _max: g._max as Record<string, number | null> },
+      PLAYER_STAT_GROUPS,
+    );
+    return {
+      playerId: g.playerId,
+      name: nameById.get(g.playerId) ?? "Unknown",
+      number: numberById.get(g.playerId) ?? null,
+      ...values,
+    } as BoxLine;
+  });
+
+  const { sum: tSum } = aggregateSelect(TEAM_STAT_GROUPS);
+  const [teamAgg, games] = await Promise.all([
+    db.gameTeamStat.aggregate({ where: { game: { seasonId } }, _sum: tSum as never }),
+    db.game.findMany({
+      where: { seasonId },
+      select: { teamPoints: true, oppPoints: true, isConference: true },
     }),
+  ]);
+  const team = mergeAggregate(teamAgg, TEAM_STAT_GROUPS);
+  const rec = computeRecord(games);
+  const per = (v: number) => (rec.gamesPlayed > 0 ? (v / rec.gamesPlayed).toFixed(1) : "0.0");
+
+  return {
+    seasonId: season.id,
+    season: season.name,
+    record: formatRecord(rec),
+    headline: {
+      passYdsPerGame: per(Number(team.passYds) || 0),
+      rushYdsPerGame: per(Number(team.rushYds) || 0),
+      pointsFor: rec.pointsFor,
+      pointsAgainst: rec.pointsAgainst,
+      sacks: team.sacks ?? 0,
+      interceptions: lines.reduce((a, l) => a + l.defInt, 0),
+    },
+    leaders: teamLeaders(lines).map((l) => ({
+      category: l.title,
+      playerId: l.playerId,
+      name: l.name,
+      value: l.value,
+    })),
+    topBySeasonNotoriety: roster.slice(0, 8).map((r) => ({
+      playerId: r.playerId,
+      name: r.playerName,
+      seasonNotoriety: r.seasonNotoriety,
+    })),
   };
 }
 
@@ -602,9 +912,21 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
         break;
       case "list_player_games": {
         const id = int(args.playerId);
-        result = id == null ? { error: "playerId required." } : await listPlayerGames(id, clampLimit(args.limit, 6, 15));
+        result =
+          id == null
+            ? { error: "playerId required." }
+            : await listPlayerGames(id, clampLimit(args.limit, 6, 20), {
+                seasonId: int(args.seasonId),
+                sortBy: String(args.sortBy ?? ""),
+              });
         break;
       }
+      case "list_seasons":
+        result = await listSeasons();
+        break;
+      case "list_games":
+        result = await listGames(args);
+        break;
       case "get_game": {
         const id = int(args.gameId);
         result = id == null ? { error: "gameId required." } : { boxScore: await describeGame(id) };
@@ -613,6 +935,20 @@ export async function runTool(name: string, args: Record<string, unknown>): Prom
       case "get_season": {
         const id = int(args.seasonId);
         result = id == null ? { error: "seasonId required." } : { overview: await describeSeason(id) };
+        break;
+      }
+      case "get_season_stats": {
+        const id = int(args.seasonId);
+        result = id == null ? { error: "seasonId required." } : await getSeasonStats(id);
+        break;
+      }
+      case "get_player_season_stats": {
+        const playerId = int(args.playerId);
+        const seasonId = int(args.seasonId);
+        result =
+          playerId == null || seasonId == null
+            ? { error: "playerId and seasonId required." }
+            : await getPlayerSeasonStats(playerId, seasonId);
         break;
       }
       case "get_play_by_play": {

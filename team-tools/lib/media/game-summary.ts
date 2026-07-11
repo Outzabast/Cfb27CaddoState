@@ -35,12 +35,12 @@ export async function writeGameSummary(gameId: number, personaId: number | null)
     TEAM_FACTS + " " +
     "You are writing a short game summary for a college-football program's internal media hub. " +
     "You have read-only research tools — use them to ENRICH and FACT-CHECK the summary before you " +
-    "write it: pull player dossiers and game history (get_player, list_player_games), the roster " +
-    "and coaching staff, the season record (get_season), prior articles about this game or by you " +
-    "(list_articles / get_article) so you stay consistent and don't repeat an angle, real quotes " +
-    "from published press conferences, and standing background facts (list_facts). Ground every " +
-    "claim strictly in that data — never invent scores, names, or stats, and never contradict the " +
-    "box score.\n\n" +
+    "write it: pull player dossiers and game history (get_player, list_player_games), past seasons " +
+    "(list_seasons / get_season / get_season_stats), the roster and coaching staff, prior articles " +
+    "about this game or by you (list_articles / get_article) so you stay consistent and don't " +
+    "repeat an angle, real quotes from published press conferences, and standing background facts " +
+    "(list_facts). Ground every claim strictly in that data — never invent scores, names, or stats, " +
+    "and never contradict the box score.\n\n" +
     `Write in this author's voice:\n${voice}\n\n` +
     "Produce a SINGLE short paragraph (3–4 sentences) giving a HIGH-LEVEL rundown of the game — NOT " +
     "a play-by-play recap. Cover the final result and score, the overall character of the game (a " +
