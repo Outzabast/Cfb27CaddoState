@@ -12,6 +12,8 @@ import "dotenv/config";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { createGunzip } from "node:zlib";
+import { pipeline } from "node:stream/promises";
 
 const container = process.env.DB_CONTAINER || "caddo-db";
 const user = process.env.POSTGRES_USER;
@@ -29,7 +31,10 @@ const file = argv.find((a) => !a.startsWith("-"));
 
 function listBackups() {
   if (!existsSync("backups")) return;
-  const files = readdirSync("backups").filter((f) => f.endsWith(".sql")).sort().reverse();
+  const files = readdirSync("backups")
+    .filter((f) => f.endsWith(".sql") || f.endsWith(".sql.gz"))
+    .sort()
+    .reverse();
   if (files.length) {
     console.error("\nAvailable backups (newest first):");
     for (const f of files) console.error(`  backups/${f}`);
@@ -77,11 +82,25 @@ child.on("error", (e) => {
   console.error(`Could not run docker: ${e.message}. Is Docker installed and running?`);
   process.exit(1);
 });
-createReadStream(file).pipe(child.stdin);
-child.on("close", (code) => {
-  if (code !== 0) {
-    console.error(`Restore failed (psql exit ${code}). The DB was rolled back / left unchanged.`);
-    process.exit(code ?? 1);
+
+// Feed the dump into psql's stdin, gunzipping on the way if it's a .sql.gz
+// (built-in zlib — no external tool, same on every OS). Plain .sql still works.
+const exit = new Promise((res) => child.on("close", res));
+const stages = [createReadStream(file)];
+if (file.endsWith(".gz")) stages.push(createGunzip());
+stages.push(child.stdin);
+try {
+  await pipeline(...stages);
+} catch (e) {
+  // A psql error closes stdin early (EPIPE); the real cause is reported below.
+  if (e.code !== "EPIPE" && e.code !== "ERR_STREAM_PREMATURE_CLOSE") {
+    console.error(`Failed reading backup: ${e.message}`);
   }
-  console.log(`✔ Restored ${file} into "${dbname}".`);
-});
+}
+
+const code = await exit;
+if (code !== 0) {
+  console.error(`Restore failed (psql exit ${code}). The DB was rolled back / left unchanged.`);
+  process.exit(code ?? 1);
+}
+console.log(`✔ Restored ${file} into "${dbname}".`);
